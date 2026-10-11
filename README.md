@@ -9,7 +9,7 @@ with your own arms and body, grabbing and climbing with your hands.
 
 ## Playing it
 
-Download the latest zip from the [Releases](../../releases) page. Install instructions, controls and troubleshooting
+Download it from [Nexus Mods](https://www.nexusmods.com/scavprototype/mods/783) or the [Releases](../../releases) page. Install instructions, controls and troubleshooting
 are in [release/README.md](release/README.md), and changes in [release/CHANGELOG.md](release/CHANGELOG.md).
 
 You need the game, [BepInEx 5](https://github.com/BepInEx/BepInEx/releases) (x64) and a PC VR headset with an OpenXR
