@@ -5,7 +5,7 @@ becomes solid blocks, liquids fill their tunnels, and characters and objects get
 controllers, and menus appear on a panel within reach. An experimental first-person mode puts you inside the world,
 with your own arms and body, grabbing and climbing with your hands.
 
-![CasualtyVR](release/nexus/casualtyvr_nexus_main.png)
+![CasualtyVR](docs/images/casualtyvr_nexus_main.png)
 
 ## Playing it
 

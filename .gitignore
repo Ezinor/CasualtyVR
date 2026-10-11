@@ -34,3 +34,6 @@ CLAUDE.local.md
 /third_party/openxr-*/x64_uwp/
 /third_party/openxr-*/x64/bin/*
 !/third_party/openxr-*/x64/bin/openxr_loader.dll
+
+# Nexus Mods page text and image scripts (local; the images are in docs/images)
+/release/nexus/
