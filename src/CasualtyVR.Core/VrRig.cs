@@ -1,0 +1,664 @@
+using System;
+using System.Collections;
+using System.Linq;
+using System.Text;
+using System.Threading;
+using UnityEngine;
+using UnityEngine.Experimental.Rendering;
+using UnityEngine.Rendering.Universal;
+
+namespace CasualtyVR
+{
+    /// <summary>
+    /// Owns the OpenXR session (through CasualtyVR.XrBridge) and two eye cameras that render the game
+    /// as a diorama in front of a seated player. The game's own orthographic camera is never moved;
+    /// it keeps driving gameplay and the desktop view (it only loses sight of the VR-only frame layer).
+    ///
+    /// Frame contract (playbook XR-005): LateUpdate waits once and caches the poses, both eye cameras
+    /// render from that cache during the normal render loop, and the submit event is issued at end of
+    /// frame so it runs after both eyes. The bridge submits exactly the views it handed out.
+    /// </summary>
+    [DefaultExecutionOrder(30000)]
+    internal sealed class VrRig : MonoBehaviour
+    {
+        // XrSessionState values we care about.
+        private const int StateFocused = 5;
+        // Frames of FOCUSED tracking before the seated origin is captured automatically. The first poses a
+        // runtime reports can be placeholders: VirtualDesktopXR reported the head at y=-1.27 m before
+        // tracking started, which put the diorama ~1.3 m too low (user report 2026-10-03).
+        private const int SettleFrames = 45;
+        private const int ShutdownTimeoutMs = 3000;
+
+        public static VrRig Instance { get; private set; }
+
+        public bool Active { get; private set; }
+
+        private XrNative.Info info;
+        private readonly Camera[] eyes = new Camera[2];
+        private VrPostOverride postOverride;
+        private int eyeMask;
+        private string lastProfile = "";
+        private bool theatreWas;
+        private ParticleAlignment particles;
+        private readonly RenderTexture[] targets = new RenderTexture[2];
+        private DioramaFrame frame;
+        private Greenscreen greenscreen;
+        private VoxelTerrain voxels;
+        private SpriteSlabs slabs;
+        private ObjectExtruder extruder;
+        private LiquidVolume liquids;
+        private VrRain rain;
+        private WorldText worldText;
+        private float dbgTalkAt = 16f;
+        private float nextSpeedLog;
+        private static readonly float DbgFpOffAt = float.TryParse(ArgValue("--cvr-dbg-fpoff"), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float fpOff) ? fpOff : -1f;
+        private static string ArgValue(string flag) { var a = Environment.GetCommandLineArgs(); int i = Array.IndexOf(a, flag); return i >= 0 && i + 1 < a.Length ? a[i + 1] : null; }
+        private static readonly bool DbgTalk = Array.IndexOf(Environment.GetCommandLineArgs(), "--cvr-dbg-talk") >= 0;
+        private FirstPerson firstPerson;
+        private VrUi ui;
+        private IntPtr submitEvent;
+        private bool waitedThisFrame;
+        private int savedVSync;
+        private Camera copiedFrom;
+        private ulong lastFrameIndex;
+        private bool bridgeWedged;
+
+        // Seated origin: follows the head until the session has settled, then stays put until F9.
+        private bool anchored;
+        private bool manualRecenter;
+        private int focusedFrames;
+        private Vector3 seatedOrigin;
+
+        // Debug switches for isolating cost (command line): --cvr-dbg-noeyes, --cvr-dbg-nopopup, --cvr-dbg-nopost
+        private static readonly string[] Args = Environment.GetCommandLineArgs();
+        private static readonly bool DbgNoEyes = Array.IndexOf(Args, "--cvr-dbg-noeyes") >= 0;
+        private static readonly bool DbgNoPopup = Array.IndexOf(Args, "--cvr-dbg-nopopup") >= 0;
+        private static readonly bool DbgNoPost = Array.IndexOf(Args, "--cvr-dbg-nopost") >= 0;
+        private static readonly bool DbgNoVoxels = Array.IndexOf(Args, "--cvr-dbg-novoxels") >= 0;
+        private static readonly bool DbgNoSlabs = Array.IndexOf(Args, "--cvr-dbg-noslabs") >= 0;
+        internal static readonly bool DbgNoLiquids = Array.IndexOf(Args, "--cvr-dbg-noliquids") >= 0;
+        private static readonly bool DbgFog = Array.IndexOf(Args, "--cvr-dbg-fog") >= 0;
+        private static readonly bool DbgDumpRenderers = Array.IndexOf(Args, "--cvr-dbg-dumprenderers") >= 0;
+        private bool dumpedRenderers;
+        private static readonly bool DbgCave = Array.IndexOf(Args, "--cvr-dbg-cave") >= 0;
+        private bool caveDone;
+        private static readonly string DbgModifiers = ArgAfter("--cvr-dbg-modifier");
+        private bool modifiersDone;
+        private static readonly string DbgSpawn = ArgAfter("--cvr-dbg-spawn");
+        private bool spawned;
+        private static string ArgAfter(string f) { int i = Array.IndexOf(Args, f); return i >= 0 && i + 1 < Args.Length ? Args[i + 1] : null; }
+        internal static readonly bool DbgNoFog = Array.IndexOf(Args, "--cvr-dbg-nofog") >= 0;
+
+        private float nextLogPump;
+        private int statFrames;
+        private float statWorst;
+
+        private void Awake()
+        {
+            Instance = this;
+            StartCoroutine(EndOfFrameSubmit());
+            UnityEngine.Rendering.RenderPipelineManager.endCameraRendering += OnEndCameraRendering;
+            int i = Array.IndexOf(Args, "--cvr-dbg-cycle");
+            if (i >= 0 && i + 1 < Args.Length) StartCoroutine(CycleTest(int.Parse(Args[i + 1])));
+        }
+
+        /// <summary>XR-004 proof: stop/start VR repeatedly once focused; every cycle must reach FOCUSED again.</summary>
+        private IEnumerator CycleTest(int cycles)
+        {
+            for (int c = 1; c <= cycles; c++)
+            {
+                float deadline = Time.realtimeSinceStartup + 30f;
+                while (!(Active && info.sessionState == StateFocused && anchored) && Time.realtimeSinceStartup < deadline)
+                    yield return null;
+                bool ok = Active && info.sessionState == StateFocused;
+                Plugin.Log.LogInfo($"cycle {c}/{cycles}: {(ok ? "FOCUSED and anchored" : "did NOT reach FOCUSED")} -> stopping");
+                yield return new WaitForSecondsRealtime(1f);
+                StopVr("cycle test");
+                yield return new WaitForSecondsRealtime(1f);
+                StartVr();
+            }
+            Plugin.Log.LogInfo($"cycle test finished ({cycles} cycles); VR left running");
+        }
+
+        private void OnDestroy()
+        {
+            if (Active) StopVr("rig destroyed");
+        }
+
+        private void OnApplicationQuit()
+        {
+            if (Active) StopVr("application quit");
+        }
+
+        private void Update()
+        {
+            if (Input.GetKeyDown(Plugin.ToggleKey.Value))
+            {
+                if (Active) StopVr("toggle key");
+                else StartVr();
+            }
+            if (!Active) return;
+
+            if (Input.GetKeyDown(Plugin.RecenterKey.Value)) manualRecenter = true;
+            if (Input.GetKeyDown(Plugin.ZoomInKey.Value)) Zoom(1f / 1.1f);
+            if (Input.GetKeyDown(Plugin.ZoomOutKey.Value)) Zoom(1.1f);
+            if (Input.GetKeyDown(Plugin.DashboardKey.Value) && ui != null) ui.ForceDashboard = !ui.ForceDashboard;
+            if (Input.GetKeyDown(Plugin.FpKey.Value))
+            {
+                bool now = !Plugin.FpWanted;
+                Plugin.FpForced = false;
+                Plugin.FpOn.Value = now;
+            }
+            if (Input.GetKeyDown(Plugin.VoxelKey.Value))
+            {
+                Plugin.VoxelsOn.Value = !Plugin.VoxelsOn.Value;
+                Plugin.Log.LogInfo($"Voxels: {(Plugin.VoxelsOn.Value ? "on" : "off")}");
+            }
+
+            XrNative.cvr_xr_poll();
+            XrNative.cvr_xr_get_info(out info);
+            LogPerf();
+
+            var main = Camera.main;
+            if (main != null && main != copiedFrom && !IsEye(main)) SyncEyesFrom(main);
+        }
+
+        private void LateUpdate()
+        {
+            if (!Active) return;
+            bool render = false;
+            if (info.sessionRunning != 0 && XrNative.cvr_xr_wait_frame(out var xrFrame) == 1)
+            {
+                waitedThisFrame = true;
+                if (lastFrameIndex != 0 && xrFrame.frameIndex != lastFrameIndex + 1)
+                    Plugin.Log.LogWarning($"Frame index jumped {lastFrameIndex} -> {xrFrame.frameIndex}");
+                lastFrameIndex = xrFrame.frameIndex;
+                if (xrFrame.shouldRender != 0 && xrFrame.viewsValid != 0)
+                {
+                    UpdateSeatedOrigin(xrFrame);
+                    Vector3 focus = Focus();
+                    // One tracking->world mapping for this frame (eyes, controllers, UI): first person or diorama.
+                    FirstPerson.UpdateTime.Start();
+                    bool fp = firstPerson != null && firstPerson.Update(ui.TheatreShown, seatedOrigin);
+                    FirstPerson.UpdateTime.Stop();
+                    if (!fp) VrSpace.SetDiorama(focus, seatedOrigin);
+                    // Both eyes' average: on canted displays (Index, Pimax) each eye is turned a few degrees outwards.
+                    VrSpace.SetHead((ToUnity(xrFrame.left.position) + ToUnity(xrFrame.right.position)) * 0.5f, Quaternion.Slerp(VrSpace.ToUnity(xrFrame.left.orientation), VrSpace.ToUnity(xrFrame.right.orientation), 0.5f));
+                    FirstPerson.UpdateTime.Start();
+                    if (fp) firstPerson.AfterHead(ui.DashboardShown);
+                    FirstPerson.UpdateTime.Stop();
+                    frame.Update(LogicCamera(), focus);
+                    greenscreen.Update(eyes, copiedFrom);
+                    postOverride.SetGreenscreen(Plugin.GreenscreenOn);
+                    particles.Update(fp);
+                    if (!DbgNoVoxels) voxels.Update();
+                    extruder.Update();
+                    if (!DbgNoSlabs) slabs.Update();
+                    if (DbgSpawn != null && !spawned && Time.timeSinceLevelLoad > 14f && PlayerCamera.main != null && PlayerCamera.main.body != null)
+                    // Headless test objects: --cvr-dbg-spawn <Resources path>[,<path>...], 6, 9, 12... blocks right of the player
+                    // (after --cvr-dbg-cave's teleport at 12 s).
+                    foreach (var (spawnPath, spawnIndex) in DbgSpawn.Split(',').Select((p, i) => (p, i)))
+                    {
+                        spawned = true;
+                        var res = Resources.Load(spawnPath) as GameObject;
+                        if (res == null) Plugin.Log.LogWarning($"Spawn: '{spawnPath}' not found");
+                        else
+                        {
+                            var go = (GameObject)Instantiate(res, PlayerCamera.main.body.transform.position + new Vector3((Array.IndexOf(Args, "--cvr-dbg-spawn-near") >= 0 ? 0.5f : 2.5f) + 1.5f * spawnIndex, 1f, 0f), Quaternion.identity);
+                            // --cvr-dbg-hold: the first spawned item goes into the character's active hand.
+                            if (spawnIndex == 0 && Array.IndexOf(Args, "--cvr-dbg-hold") >= 0 && go.TryGetComponent<Item>(out var heldItem))
+                            {
+                                var hb = PlayerCamera.main.body;
+                                hb.PickUpItem(heldItem, hb.handSlot, force: true);
+                                Plugin.Log.LogInfo($"Spawn: '{spawnPath}' put in hand slot {hb.handSlot}: {hb.HoldingItem(hb.handSlot)}");
+                            }
+                            // --cvr-dbg-keypad: open the spawned object's keypad minigame (headless minigame test).
+                            if (Array.IndexOf(Args, "--cvr-dbg-keypad") >= 0 && go.TryGetComponent<BuildingEntity>(out var be))
+                                MinigameBase.main.StartMinigame(new KeypadMinigame(be, KeypadMinigame.GenerateCode()), null);
+                            // --cvr-dbg-lockpick: the lockpicking minigame on it, by hand (no kit), 5 degrees either way.
+                            if (Array.IndexOf(Args, "--cvr-dbg-lockpick") >= 0 && go.TryGetComponent<BuildingEntity>(out var lbe))
+                                MinigameBase.main.StartMinigame(new LockpingMinigame(lbe, 5f), null);
+                            foreach (var c in go.GetComponentsInChildren<Component>(true))
+                            {
+                                string extra = c is SpriteRenderer sr ? $" sprite {sr.sprite?.name} {sr.sortingLayerName}/{sr.sortingOrder} size {sr.bounds.size} drawMode {sr.drawMode} shader {sr.sharedMaterial?.shader?.name} layer {sr.gameObject.layer}"
+                                             : c is Collider2D col ? $" trigger {col.isTrigger}" : "";
+                                Plugin.Log.LogInfo($"Spawn: {c.gameObject.name} : {c.GetType().Name}{extra}");
+                            }
+                        }
+                    }
+                    if (DbgModifiers != null && !modifiersDone && Time.timeSinceLevelLoad > 10f && WorldGeneration.world != null && !WorldGeneration.world.generatingWorld && PlayerCamera.main != null && PlayerCamera.main.body != null)
+                    {
+                        // --cvr-dbg-modifier <index>[,<index>]: apply layer modifiers as WorldGeneration.ApplyLayerModifiers
+                        // does (0 Foggy, 1 Warm, 2 Hot, 3 Cold, 4 Freezing, 5 Flooded, 6 Dry, 7 Rainy, 8 Infested, 9 Ionized, 10 Unchipped).
+                        modifiersDone = true;
+                        foreach (var part in DbgModifiers.Split(','))
+                        {
+                            if (!int.TryParse(part, out int mi) || mi < 0 || mi >= LayerModifier.availableModifiers.Length) continue;
+                            var mod = LayerModifier.availableModifiers[mi];
+                            if (mod.active) continue;
+                            mod.Initialize(WorldGeneration.world);
+                            mod.active = true;
+                            Plugin.Log.LogInfo($"Modifier test: applied {mod.GetType().Name} ({mi})");
+                            var rs = WorldGeneration.world.rainSprite;
+                            if (mi == 7 && rs != null)
+                            {
+                                string path = rs.name;
+                                for (var tt = rs.transform.parent; tt != null; tt = tt.parent) path = tt.name + "/" + path;
+                                Plugin.Log.LogInfo($"Modifier test: rainSprite {path} sprite {rs.sprite?.name} {rs.sortingLayerName}/{rs.sortingOrder} drawMode {rs.drawMode} size {rs.bounds.size} pos {rs.transform.position} shader {rs.sharedMaterial?.shader?.name} layer {rs.gameObject.layer}");
+                            }
+                        }
+                    }
+                    // --cvr-dbg-rain: the rain overlay at full strength (the game sets its alpha from a rain map each frame).
+                    if (Array.IndexOf(Args, "--cvr-dbg-rain") >= 0 && WorldGeneration.world != null && WorldGeneration.world.rainSprite != null)
+                        WorldGeneration.world.rainSprite.color = Color.white;
+                    if (DbgCave && !caveDone && Time.timeSinceLevelLoad > 12f && PlayerCamera.main != null && PlayerCamera.main.body != null && WorldGeneration.world != null && !WorldGeneration.world.generatingWorld)
+                    {
+                        // --cvr-dbg-cave: headless first-person test spot; teleport to the nearest open tunnel
+                        // (14 x 8 blocks of air over a solid floor) below the start.
+                        caveDone = true;
+                        var w = WorldGeneration.world;
+                        var start = w.WorldToBlockPos(PlayerCamera.main.body.transform.position);
+                        bool Air(int x, int y) => w.GetBlock(new Vector2Int(x, y)) == 0;
+                        Vector2Int? found = null;
+                        for (int dy = 12; dy < 200 && found == null; dy++)
+                            for (int dx = 0; dx < 160 && found == null; dx += 2)
+                                foreach (int sx in new[] { start.x + dx, start.x - dx })
+                                {
+                                    int y0 = start.y - dy;
+                                    if (y0 < 2 || sx < 8 || sx > w.width - 8) continue;
+                                    if (Air(sx, y0 - 1)) continue;   // floor
+                                    bool ok = true;
+                                    for (int x = sx - 7; x <= sx + 7 && ok; x++)
+                                        for (int y = y0; y < y0 + 8 && ok; y++) ok = Air(x, y);
+                                    if (ok) { found = new Vector2Int(sx, y0); break; }
+                                }
+                        if (found.HasValue)
+                        {
+                            Vector2 pos = w.BlockToWorldPos(found.Value) + new Vector2(0f, 2.6f);
+                            PlayerCamera.main.body.transform.position = pos;
+                            PlayerCamera.main.transform.position = new Vector3(pos.x, pos.y, PlayerCamera.main.transform.position.z);
+                            Plugin.Log.LogInfo($"Cave test: teleported to {pos}");
+                        }
+                        else Plugin.Log.LogWarning("Cave test: no open tunnel found");
+                    }
+                    if (DbgDumpRenderers && !dumpedRenderers && Time.timeSinceLevelLoad > 15f && PlayerCamera.main != null && PlayerCamera.main.body != null)
+                    {
+                        // Every renderer within 12 units of the player: what PopupDepth does with it (offset glow hunt).
+                        dumpedRenderers = true;
+                        var p = PlayerCamera.main.body.transform.position;
+                        foreach (var r in FindObjectsOfType<Renderer>())
+                        {
+                            if (!r.enabled || ((Vector2)(r.bounds.center - p)).magnitude > 12f || r.gameObject.layer >= 25) continue;
+                            string path = r.name;
+                            for (var t = r.transform.parent; t != null; t = t.parent) path = t.name + "/" + path;
+                            Plugin.Log.LogInfo($"R: {path} | {r.GetType().Name} {r.sortingLayerName}/{r.sortingOrder} depth {PopupDepth.DepthFor(r.sortingLayerName, r.sortingOrder):F2} col {(r.GetComponent<Collider2D>() != null)} layer {r.gameObject.layer} shader {(r.sharedMaterial != null && r.sharedMaterial.shader != null ? r.sharedMaterial.shader.name : "-")} z {r.transform.position.z:F2}");
+                        }
+                    }
+                    if (DbgFog && WorldGeneration.world != null && !WorldGeneration.world.generatingWorld && WorldGeneration.world.fogAmount < 1f)
+                    {
+                        WorldGeneration.world.SetFog(1f);   // headless test of the Foggy modifier
+                        Plugin.Log.LogInfo($"Fog: forced on (sprite '{WorldGeneration.world.fogSprite.name}' sorting {WorldGeneration.world.fogSprite.sortingLayerName}/{WorldGeneration.world.fogSprite.sortingOrder} pos {WorldGeneration.world.fogSprite.transform.position} parent {WorldGeneration.world.fogSprite.transform.parent?.name} mat {WorldGeneration.world.fogMat?.shader?.name})");
+                    }
+                    liquids.Update();
+                    rain.Update();
+                    worldText.Update();
+                    // --cvr-dbg-fpoff <s>: first person off at that level time (speed-restore test); the cap is logged.
+                    if (DbgFpOffAt > 0f && PlayerCamera.main != null && PlayerCamera.main.body != null)
+                    {
+                        var sb = PlayerCamera.main.body;
+                        if (Time.timeSinceLevelLoad > DbgFpOffAt && Plugin.FpWanted) { Plugin.FpForced = false; Plugin.FpOn.Value = false; nextSpeedLog = 0f; }
+                        if (Time.timeSinceLevelLoad > DbgFpOffAt - 3f && Time.unscaledTime >= nextSpeedLog)
+                        {
+                            nextSpeedLog = Time.unscaledTime + 1f;
+                            Plugin.Log.LogInfo($"Speed check: first person {FirstPerson.Active} cap {sb.actualMaxSpeed:F1} of {sb.maxSpeed:F1}");
+                        }
+                    }
+                    // --cvr-dbg-talk: the character speaks every 6 s (world-text test).
+                    if (DbgTalk && Time.timeSinceLevelLoad > dbgTalkAt && PlayerCamera.main != null && PlayerCamera.main.body != null && PlayerCamera.main.body.TryGetComponent<Talker>(out var talker))
+                    {
+                        dbgTalkAt = Time.timeSinceLevelLoad + 6f;
+                        talker.Talk("Test line: where am I? It is dark down here.", null, true, true);
+                        WorldGeneration.CreateDamageNumber((Vector2)PlayerCamera.main.body.transform.position + new Vector2(PlayerCamera.main.body.isRight ? 6f : -6f, 2f), 42);
+                        Plugin.Log.LogInfo("Talk test: line spoken, damage number shown");
+                    }
+                    VrHands.UpdateMinigamePivot(true);
+                    HudScaler.Apply(true);
+                    ui.Update(focus, LogicCamera(), seatedOrigin, Plugin.UnitsPerMetre.Value);
+                    XrNative.cvr_xr_get_input(out var input);
+                    VrInput.Update(input, ui, focus, seatedOrigin, Plugin.UnitsPerMetre.Value);
+                    FirstPerson.UpdateTime.Start();
+                    firstPerson?.AfterInput();
+                    FirstPerson.UpdateTime.Stop();
+                    if (input.profile != lastProfile) { lastProfile = input.profile; Plugin.Log.LogInfo($"Controllers: profile '{input.profile}'"); }
+                    // Theatre (menu, loading, end screen): nothing of the level behind the panel.
+                    int mask = ui.TheatreShown ? (1 << DioramaFrame.Layer) : fp ? eyeMask & ~(1 << DioramaFrame.Layer) : eyeMask;
+                    foreach (var eye in eyes) if (eye.cullingMask != mask) eye.cullingMask = mask;
+                    if (ui.TheatreShown != theatreWas)
+                    {
+                        // Behind a theatre panel the game's screen effects (e.g. the dying wash) are just haze.
+                        foreach (var eye in eyes)
+                        {
+                            if (ui.TheatreShown) ScreenPassFilter.Exclude(eye);
+                            else ScreenPassFilter.Exclude(eye, "AberPass");
+                        }
+                        theatreWas = ui.TheatreShown;
+                    }
+                    ApplyView(eyes[0], xrFrame.left);
+                    ApplyView(eyes[1], xrFrame.right);
+                    render = true;
+                }
+            }
+            foreach (var eye in eyes)
+                if (eye) eye.enabled = render && !DbgNoEyes;
+        }
+
+        private IEnumerator EndOfFrameSubmit()
+        {
+            var wait = new WaitForEndOfFrame();
+            while (true)
+            {
+                yield return wait;
+                if (Active && waitedThisFrame)
+                {
+                    waitedThisFrame = false;
+                    GL.IssuePluginEvent(submitEvent, 1);
+                }
+            }
+        }
+
+        public void StartVr()
+        {
+            if (Active) return;
+            if (bridgeWedged)
+            {
+                Plugin.Log.LogError("VR start refused: a previous shutdown did not finish; restart the game");
+                ScreenNotice.Show("CasualtyVR: VR cannot restart in this session. Restart the game.");
+                return;
+            }
+            // The bridge takes Unity's texture as a D3D11 one: any other API (-force-vulkan, -force-d3d12) would crash it.
+            if (SystemInfo.graphicsDeviceType != UnityEngine.Rendering.GraphicsDeviceType.Direct3D11)
+            {
+                Plugin.Log.LogError($"VR start failed: the game renders with {SystemInfo.graphicsDeviceType}; CasualtyVR needs Direct3D 11");
+                ScreenNotice.Show($"CasualtyVR: VR needs Direct3D 11, but the game is using {SystemInfo.graphicsDeviceType}. Remove -force-vulkan / -force-d3d12 from the launch options.");
+                return;
+            }
+            if (!XrNative.Preload(Plugin.NativeDir, out string preloadError))
+            {
+                Plugin.Log.LogError("VR start failed: " + preloadError);
+                ScreenNotice.Show("CasualtyVR: VR could not start (the mod's native files did not load). Reinstall the mod; details in BepInEx\\LogOutput.log.");
+                return;
+            }
+
+            // The bridge finds Unity's D3D11 device through any Unity-created texture.
+            var probe = new RenderTexture(4, 4, 0, GraphicsFormat.R8G8B8A8_SRGB);
+            probe.Create();
+            var error = new StringBuilder(512);
+            int ok = XrNative.cvr_xr_init(probe.GetNativeTexturePtr(), error, error.Capacity);
+            probe.Release();
+            Destroy(probe);
+            PumpNativeLog();
+            if (ok != 1)
+            {
+                Plugin.Log.LogError("VR start failed: " + error);
+                string reason = error.ToString();
+                string key = Plugin.ToggleKey.Value.ToString();
+                ScreenNotice.Show(reason.Contains("xrCreateInstance")
+                    ? $"CasualtyVR: no OpenXR runtime is available. Start your headset's PC app (Virtual Desktop, SteamVR or Meta Quest Link), make it the active OpenXR runtime, then press {key}."
+                    : reason.Contains("no head-mounted display")
+                        ? $"CasualtyVR: the OpenXR runtime sees no headset. Connect the headset, then press {key}."
+                        : $"CasualtyVR: VR could not start: {reason}.\nDetails in BepInEx\\LogOutput.log.");
+                return;
+            }
+
+            XrNative.cvr_xr_get_info(out info);
+            Plugin.Log.LogInfo($"OpenXR: runtime '{info.runtimeName}' system '{info.systemName}' api {info.apiMajor}.{info.apiMinor}, eye {info.recommendedWidth}x{info.recommendedHeight}, swapchain format {info.swapchainFormat}");
+
+            for (int i = 0; i < 2; i++)
+            {
+                // The bridge picks RGBA8 when the runtime has it, else BGRA8 (DXGI 87 and 91); CopyResource needs the same family.
+                var eyeFormat = info.swapchainFormat == 87 || info.swapchainFormat == 91 ? GraphicsFormat.B8G8R8A8_SRGB : GraphicsFormat.R8G8B8A8_SRGB;
+                var desc = new RenderTextureDescriptor(info.recommendedWidth, info.recommendedHeight, eyeFormat, 24)
+                {
+                    msaaSamples = 1,
+                    useMipMap = false,
+                };
+                targets[i] = new RenderTexture(desc) { name = i == 0 ? "CasualtyVR.EyeL" : "CasualtyVR.EyeR" };
+                targets[i].Create();
+
+                var go = new GameObject(i == 0 ? "CasualtyVR.EyeL" : "CasualtyVR.EyeR") { hideFlags = HideFlags.DontSave };
+                DontDestroyOnLoad(go);
+                eyes[i] = go.AddComponent<Camera>();
+                eyes[i].enabled = false;
+                if (!DbgNoPopup) PopupDepth.Register(eyes[i]);
+                // Screen-locked colour fringing in a headset: keep the game's damage/consciousness passes, drop this one.
+                ScreenPassFilter.Exclude(eyes[i], "AberPass");
+
+            }
+            postOverride = new VrPostOverride();
+            particles = new ParticleAlignment();
+            frame = new DioramaFrame();
+            voxels = new VoxelTerrain();
+            slabs = new SpriteSlabs();
+            extruder = new ObjectExtruder();
+            liquids = new LiquidVolume();
+            ui = new VrUi { Frame = frame };
+            greenscreen = new Greenscreen();
+            rain = new VrRain();
+            worldText = new WorldText();
+            if (Array.IndexOf(Args, "--cvr-dbg-nofp") < 0) firstPerson = new FirstPerson();
+            XrNative.cvr_xr_set_eye_textures(targets[0].GetNativeTexturePtr(), targets[1].GetNativeTexturePtr());
+            submitEvent = XrNative.cvr_xr_get_submit_event();
+            copiedFrom = null;
+            if (Camera.main != null) SyncEyesFrom(Camera.main);
+
+            anchored = false;
+            manualRecenter = false;
+            focusedFrames = 0;
+            lastFrameIndex = 0;
+
+            // The runtime paces the frame loop (xrWaitFrame); monitor vsync would fight it.
+            savedVSync = QualitySettings.vSyncCount;
+            QualitySettings.vSyncCount = 0;
+            PopupDepth.Scale = Plugin.PopupScale.Value;
+            VrInput.Enabled = true;
+            Active = true;
+            Plugin.Log.LogInfo("VR started");
+        }
+
+        public void StopVr(string reason)
+        {
+            if (!Active) return;
+            Active = false;
+            VrInput.Enabled = false;   // releases every synthetic key
+            HudScaler.Apply(false);
+            VrHands.UpdateMinigamePivot(false);
+            waitedThisFrame = false;
+            // XR-004: tear down everything StartVr created, so the process returns to its pre-start state.
+            for (int i = 0; i < 2; i++)
+            {
+                if (eyes[i])
+                {
+                    PopupDepth.Unregister(eyes[i]);
+                    ScreenPassFilter.Forget(eyes[i]);
+                    Destroy(eyes[i].gameObject);
+                }
+                eyes[i] = null;
+            }
+            frame?.Destroy();
+            greenscreen?.Destroy();
+            greenscreen = null;
+            firstPerson?.Destroy();
+            firstPerson = null;
+            voxels?.Destroy();
+            voxels = null;
+            slabs?.Destroy();
+            extruder?.Destroy();
+            extruder = null;
+            slabs = null;
+            liquids?.Destroy();
+            rain?.Destroy();
+            rain = null;
+            worldText?.Destroy();
+            worldText = null;
+            liquids = null;
+            postOverride?.Destroy();
+            particles?.Restore();
+            particles = null;
+            postOverride = null;
+            ui?.Destroy();
+            ui = null;
+            frame = null;
+            if (copiedFrom) copiedFrom.cullingMask |= (1 << DioramaFrame.Layer) | (1 << VrUi.OverlayLayer) | (1 << VoxelTerrain.Layer);
+            copiedFrom = null;
+
+            XrNative.cvr_xr_set_eye_textures(IntPtr.Zero, IntPtr.Zero);
+            // Run the native teardown under a watchdog: a runtime that blocks in session teardown must
+            // never hang the game (WER AppHangB1 at quit with VirtualDesktopXR, 2026-10-03).
+            var shutdown = new Thread(XrNative.cvr_xr_shutdown) { IsBackground = true, Name = "CasualtyVR.XrShutdown" };
+            shutdown.Start();
+            if (!shutdown.Join(ShutdownTimeoutMs))
+            {
+                bridgeWedged = true;
+                Plugin.Log.LogError($"OpenXR shutdown did not finish within {ShutdownTimeoutMs} ms; continuing without it (VR cannot restart this session)");
+            }
+            PumpNativeLog();
+            for (int i = 0; i < 2; i++)
+            {
+                if (targets[i]) { targets[i].Release(); Destroy(targets[i]); }
+                targets[i] = null;
+            }
+            QualitySettings.vSyncCount = savedVSync;
+            Plugin.Log.LogInfo($"VR stopped ({reason}): {info.framesSubmitted} frames submitted, {info.framesDropped} dropped");
+        }
+
+        private void UpdateSeatedOrigin(XrNative.FrameInfo f)
+        {
+            Vector3 head = (ToUnity(f.left.position) + ToUnity(f.right.position)) * 0.5f;
+            focusedFrames = info.sessionState == StateFocused ? focusedFrames + 1 : 0;
+            if (manualRecenter || (!anchored && focusedFrames >= SettleFrames))
+            {
+                seatedOrigin = head;
+                anchored = true;
+                Plugin.Log.LogInfo($"Recentered ({(manualRecenter ? "key" : "auto after settle")}): seated origin {head} m (LOCAL, Unity axes)");
+                manualRecenter = false;
+            }
+            else if (!anchored)
+            {
+                seatedOrigin = head;   // until tracking settles, keep the diorama in front of the head
+            }
+        }
+
+        public void Recenter() => manualRecenter = true;
+
+        private static void Zoom(float factor)
+        {
+            // Fewer world units per metre = bigger blocks = zoomed in.
+            Plugin.UnitsPerMetre.Value = Mathf.Clamp(Plugin.UnitsPerMetre.Value * factor, 8f, 80f);
+            Plugin.Log.LogInfo($"Zoom: {Plugin.UnitsPerMetre.Value:F1} units/m (view height {45f / Plugin.UnitsPerMetre.Value:F2} m)");
+        }
+
+        private void SyncEyesFrom(Camera main)
+        {
+            if (copiedFrom) copiedFrom.cullingMask |= (1 << DioramaFrame.Layer) | (1 << VrUi.OverlayLayer) | (1 << VoxelTerrain.Layer);
+            copiedFrom = main;
+            // The frame is VR-only: hide its layer from the game's own camera.
+            main.cullingMask &= ~(1 << DioramaFrame.Layer) & ~(1 << VrUi.OverlayLayer) & ~(1 << VoxelTerrain.Layer);
+            var mainData = main.GetUniversalAdditionalCameraData();
+            for (int i = 0; i < 2; i++)
+            {
+                var cam = eyes[i];
+                bool wasEnabled = cam.enabled;
+                cam.CopyFrom(main);
+                // CopyFrom carries the source's matrices; they would ignore our pose (PHASE1_SPIKE_RECEIPT).
+                cam.ResetWorldToCameraMatrix();
+                cam.ResetProjectionMatrix();
+                cam.orthographic = false;
+                // Eyes see the VR-only frame; the UI overlay quads are drawn after post (VrUi.DrawInto) and the
+                // desktop quad never reaches an eye.
+                cam.cullingMask = (main.cullingMask | (1 << DioramaFrame.Layer) | (1 << VoxelTerrain.Layer)) & ~(1 << VrUi.OverlayLayer) & ~(1 << VrUi.DesktopLayer);
+                eyeMask = cam.cullingMask;
+                cam.targetTexture = targets[i];
+                cam.depth = main.depth - 2 + i;
+                cam.stereoTargetEye = StereoTargetEyeMask.None;
+                cam.enabled = wasEnabled;
+                var data = cam.GetUniversalAdditionalCameraData();
+                data.renderPostProcessing = mainData.renderPostProcessing && !DbgNoPost;
+                data.volumeLayerMask = VrPostOverride.AddTo(mainData.volumeLayerMask);
+                data.antialiasing = AntialiasingMode.None;
+                data.dithering = true;   // hides 8-bit banding in dark gradients now that film grain is off
+            }
+            Plugin.Log.LogInfo($"Eye cameras synced from '{main.name}'");
+        }
+
+        private static Camera LogicCamera() =>
+            PlayerCamera.main != null ? PlayerCamera.main.GetComponent<Camera>() : Camera.main;
+
+        private static Vector3 Focus()
+        {
+            var logic = LogicCamera();
+            return logic != null ? new Vector3(logic.transform.position.x, logic.transform.position.y, 0f) : Vector3.zero;
+        }
+
+        private static Vector3 ToUnity(XrNative.Vec3 p) => VrSpace.ToUnity(p);
+
+        private static void ApplyView(Camera cam, XrNative.View v)
+        {
+            // Diorama: the game plane (z=0) is centred DioramaDistance metres in front of the seated head origin.
+            // First person: the seated origin is the character's eye (VrSpace).
+            float s = VrSpace.Scale;
+            cam.transform.SetPositionAndRotation(VrSpace.Point(VrSpace.ToUnity(v.position)), VrSpace.Rot(VrSpace.ToUnity(v.orientation)));
+
+            // First person looks along the world's rows: with the diorama's far plane (4000) every sprite, light and
+            // chunk across the whole world in that direction was culled, sorted and drawn (40 fps, CPU-bound, 2026-10-05).
+            float n = 0.05f * s, f = VrSpace.FirstPerson ? Mathf.Max(10f, Plugin.FpViewDistance.Value) : 4000f;
+            var proj = Matrix4x4.Frustum(n * Mathf.Tan(v.fov.left), n * Mathf.Tan(v.fov.right),
+                                         n * Mathf.Tan(v.fov.down), n * Mathf.Tan(v.fov.up), n, f);
+            // Unity stores D3D render textures bottom-up; the swapchain copy is a raw CopyResource, so the
+            // eye image is flipped at projection time instead (verified in the xr-sim compositor capture).
+            if (Plugin.FlipY.Value) proj = Matrix4x4.Scale(new Vector3(1f, -1f, 1f)) * proj;
+            cam.nearClipPlane = n;
+            cam.farClipPlane = f;
+            cam.projectionMatrix = proj;
+        }
+
+        private void OnEndCameraRendering(UnityEngine.Rendering.ScriptableRenderContext context, Camera cam)
+        {
+            if (!Active || ui == null) return;
+            for (int i = 0; i < 2; i++)
+                if (cam == eyes[i]) ui.DrawInto(context, cam, targets[i]);
+        }
+
+        private bool IsEye(Camera cam) => cam == eyes[0] || cam == eyes[1];
+        public bool IsEyeCamera(Camera cam) => cam != null && Active && IsEye(cam);
+
+        private void LogPerf()
+        {
+            statFrames++;
+            statWorst = Mathf.Max(statWorst, Time.unscaledDeltaTime);
+            if (Time.unscaledTime < nextLogPump) return;
+            float span = Time.unscaledTime - (nextLogPump - 2f);
+            if (Plugin.Verbose) Plugin.Log.LogInfo($"perf: {statFrames / Mathf.Max(span, 1e-3f):F1} fps, worst {statWorst * 1000f:F1} ms, popup {PopupDepth.LastApplyMs:F2} ms/{PopupDepth.LastCount} (skipped {PopupDepth.LastSkipped}), voxels {voxels?.ChunkCount ?? 0} chunks/{voxels?.PendingCount ?? 0} pending/{voxels?.LastBuildMs ?? 0f:F1} ms, slabs {slabs?.SourceCount ?? 0}, extruded {extruder?.Count ?? 0}, liquid surface {liquids?.SurfaceCells ?? 0}, submitted {info.framesSubmitted}, state {info.sessionState}");
+            var body = PlayerCamera.main != null ? PlayerCamera.main.body : null;
+            if (Plugin.Verbose && VrSpace.FirstPerson && eyes[0] != null) Plugin.Log.LogInfo($"fp: eye {eyes[0].transform.position} fwd {eyes[0].transform.forward} rot {VrSpace.Rotation.eulerAngles} scale {VrSpace.Scale:F2} facingRight {FirstPerson.FacingRightNow} billboards {FirstPerson.BillboardGroups} standing {(body != null && body.standing)} fpUpdate {FirstPerson.UpdateTime.Elapsed.TotalMilliseconds / Mathf.Max(1, statFrames):F2} ms/frame fpRender {FirstPerson.RenderTime.Elapsed.TotalMilliseconds / Mathf.Max(1, statFrames):F2} ms/frame popup {PopupDepth.LastApplyMs:F2} ms texts {(worldText != null ? worldText.Shown : 0)} rain {(rain != null ? $"{rain.Particles} playing {rain.Playing} alpha {(WorldGeneration.world != null && WorldGeneration.world.rainSprite != null ? WorldGeneration.world.rainSprite.color.a : -1f):F2}" : "-")}");
+            FirstPerson.UpdateTime.Reset();
+            FirstPerson.RenderTime.Reset();
+            if (Plugin.Verbose) Plugin.Log.LogInfo($"input: laser={(VrInput.LaserMode ? "on" : "off")} hit={VrInput.LaserHit} mouse={VrInput.VirtualMouse} held=[{VrInput.HeldList()}] body={(body != null ? body.transform.position.ToString() : "-")} profile='{VrInput.Profile}'");
+            nextLogPump = Time.unscaledTime + 2f;
+            statFrames = 0;
+            statWorst = 0f;
+            PumpNativeLog();
+        }
+
+        private static void PumpNativeLog()
+        {
+            string log = XrNative.DrainLog();
+            if (string.IsNullOrEmpty(log)) return;
+            foreach (var line in log.Split(new[] { '\n' }, StringSplitOptions.RemoveEmptyEntries))
+            {
+                // Players' logs keep the bridge's start/stop, warnings and errors, not the per-second timing.
+                bool routine = line.Contains("timing/frame") || line.Contains("input: hand");
+                if (Plugin.Verbose || !routine) Plugin.Log.LogInfo("[bridge] " + line);
+            }
+        }
+    }
+}

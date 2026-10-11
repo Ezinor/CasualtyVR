@@ -1,0 +1,6 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <AssemblyName>CasualtyVR.Sandbox.Runtime</AssemblyName>
+    <RootNamespace>CasualtyVR.Sandbox</RootNamespace>
+  </PropertyGroup>
+</Project>

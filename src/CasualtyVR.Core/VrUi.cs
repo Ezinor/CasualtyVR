@@ -1,0 +1,556 @@
+using System.Collections.Generic;
+using System.Linq;
+using UnityEngine;
+using UnityEngine.EventSystems;
+using UnityEngine.Rendering.Universal;
+using UnityEngine.SceneManagement;
+using UnityEngine.UI;
+
+namespace CasualtyVR
+{
+    /// <summary>
+    /// Gets the game's screen-space UI into the headset (Phase 3, risk R9: overlay canvases only ever
+    /// reach the window).
+    ///
+    /// Every root ScreenSpaceOverlay canvas is switched to ScreenSpaceCamera on a UI-only camera whose
+    /// world coordinates equal screen pixels: it sits at (W/2, H/2, -PlaneDistance), orthographic size H/2,
+    /// and the canvases sit on its z=0 plane. In that setup a canvas has the same position and scale it
+    /// had as an overlay, so game code that writes pixel positions into UI transforms
+    /// (`dragImage.rectTransform.position = Input.mousePosition`, the radial menu, tooltips) and
+    /// `PlayerCamera.uiScale` keep working unchanged, and the EventSystem's raycasts map 1:1 because the
+    /// UI texture has the window's size.
+    ///
+    /// The UI texture is shown three ways:
+    ///   desktop  - a raw-image overlay canvas, so the monitor looks as before;
+    ///   HUD      - mapped onto the diorama's window opening (= the flat camera's view), so the HUD sits on
+    ///              the diorama's corners and screen-aligned UI (radial menu, drag icon) lines up with the world;
+    ///   dashboard- a panel below the diorama, tilted towards the player, when a menu/minigame is open.
+    /// All of it is reverted when VR stops (XR-004).
+    /// </summary>
+    internal sealed class VrUi
+    {
+        public const int UiLayer = 30;
+        private const float PlaneDistance = 100f;
+
+        private readonly Camera uiCam;
+        public Camera UiCamera => uiCam;
+        private RenderTexture rt;
+        public const int DesktopLayer = 29;   // seen only by the game's own camera (desktop mirror)
+        // HUD / dashboard / main-menu quads: no camera renders this layer. They are drawn straight into each
+        // finished eye image by DrawInto (after post-processing, so no bloom; user report "too glowy"), which
+        // costs a few draw calls instead of an overlay camera's full 2D-renderer pass (90 -> 80 fps measured).
+        public const int OverlayLayer = 31;
+        private readonly UnityEngine.Rendering.CommandBuffer overlayCmd = new UnityEngine.Rendering.CommandBuffer { name = "CasualtyVR.UiOverlay" };
+        private readonly GameObject desktop;
+        private readonly GameObject hud;
+        private readonly GameObject dashboard;
+        private readonly GameObject theatre;   // main menu: the whole UI, big and centred where the diorama sits
+        private readonly Material panelMaterial;      // opaque dashboard
+        private readonly Material additiveMaterial;   // HUD over the diorama, and the desktop mirror
+        private readonly Dictionary<Canvas, int> converted = new Dictionary<Canvas, int>();   // canvas -> original layer
+        private float nextScan;
+        private bool selfTestDone;
+        private float settledSince = -1f;
+        private bool lastMenuScene;
+
+        public bool DashboardShown { get; private set; }
+        private readonly Mesh cursorMesh = CreateCursorMesh();
+        private readonly Mesh beamMesh = CreateBeamMesh();
+        private readonly Mesh reticleMesh = CreateReticleMesh();
+        private readonly Material beamMaterial = new Material(Shader.Find("Sprites/Default")) { name = "CasualtyVR.Beam" };
+        private readonly Material cursorMaterial = new Material(Shader.Find("Sprites/Default")) { name = "CasualtyVR.Cursor" };
+        private float unitsPerMetreForCursor = 25f;
+
+        /// <summary>F11 (or --cvr-dbg-dashboard): show the dashboard even when no menu is open.</summary>
+        public bool ForceDashboard = System.Array.IndexOf(System.Environment.GetCommandLineArgs(), "--cvr-dbg-dashboard") >= 0;
+
+        public DioramaFrame Frame;
+
+        public VrUi()
+        {
+            var camGo = new GameObject("CasualtyVR.UiCamera") { hideFlags = HideFlags.DontSave };
+            Object.DontDestroyOnLoad(camGo);
+            uiCam = camGo.AddComponent<Camera>();
+            uiCam.orthographic = true;
+            uiCam.cullingMask = 1 << UiLayer;
+            uiCam.clearFlags = CameraClearFlags.SolidColor;
+            uiCam.backgroundColor = new Color(0f, 0f, 0f, 0f);
+            uiCam.nearClipPlane = 1f;
+            uiCam.farClipPlane = PlaneDistance * 2f;
+            uiCam.depth = 50;
+            // No HDR: URP would render through an R11G11B10 intermediate (no alpha channel) and the UI
+            // texture would come out opaque black wherever there is no UI (seen in xr-sim capture).
+            uiCam.allowHDR = false;
+            uiCam.allowMSAA = false;
+            // The game's full-screen effect passes must not paint over the UI (pink wash while dying).
+            ScreenPassFilter.Exclude(uiCam);
+            var data = uiCam.GetUniversalAdditionalCameraData();
+            data.renderPostProcessing = false;
+            data.antialiasing = AntialiasingMode.None;
+
+            var shader = Shader.Find("Sprites/Default") ?? Shader.Find("Universal Render Pipeline/2D/Sprite-Unlit-Default");
+            panelMaterial = new Material(shader) { name = "CasualtyVR.UiPanel" };
+            // URP's 2D renderer writes alpha = 1 into the UI texture whatever the clear colour (read back
+            // in gameplay: empty areas are (0,0,0,1) while every full-screen UI image has alpha 0). The HUD
+            // is glowing outlines and text, so it is composited additively: black adds nothing.
+            additiveMaterial = CreateAdditiveMaterial();
+            hud = CreateQuad("CasualtyVR.UiHud", short.MaxValue, additiveMaterial);
+            dashboard = CreateQuad("CasualtyVR.UiDashboard", short.MaxValue, panelMaterial);
+            theatre = CreateQuad("CasualtyVR.UiTheatre", short.MaxValue, panelMaterial);
+            // Desktop: same additive composite, on a quad in front of the game camera that only it sees
+            // (UGUI cannot draw the URP particle shader, and the opaque texture would black out the monitor).
+            desktop = CreateQuad("CasualtyVR.UiDesktop", short.MaxValue, additiveMaterial, DesktopLayer);
+
+            EnsureTexture();
+            SceneManager.sceneLoaded += OnSceneLoaded;
+        }
+
+        private static Material CreateAdditiveMaterial()
+        {
+            var shader = Shader.Find("Universal Render Pipeline/Particles/Unlit");
+            if (shader == null)
+            {
+                Plugin.Log.LogWarning("UI: URP Particles/Unlit not found; HUD will be opaque");
+                return new Material(Shader.Find("Sprites/Default"));
+            }
+            var m = new Material(shader) { name = "CasualtyVR.UiAdditive", renderQueue = 3000 };
+            m.SetFloat("_Surface", 1f);
+            m.SetFloat("_Blend", 2f);          // additive
+            m.SetFloat("_SrcBlend", (float)UnityEngine.Rendering.BlendMode.One);
+            m.SetFloat("_DstBlend", (float)UnityEngine.Rendering.BlendMode.One);
+            m.SetFloat("_ZWrite", 0f);
+            m.SetFloat("_Cull", 0f);
+            m.EnableKeyword("_SURFACE_TYPE_TRANSPARENT");
+            m.SetColor("_BaseColor", Color.white);
+            return m;
+        }
+
+        private GameObject CreateQuad(string name, int order, Material material, int layer = OverlayLayer)
+        {
+            var go = new GameObject(name) { layer = layer, hideFlags = HideFlags.DontSave };
+            Object.DontDestroyOnLoad(go);
+            var mesh = new Mesh { name = name };
+            mesh.vertices = new[] { new Vector3(-0.5f, -0.5f), new Vector3(0.5f, -0.5f), new Vector3(0.5f, 0.5f), new Vector3(-0.5f, 0.5f) };
+            mesh.uv = new[] { new Vector2(0, 0), new Vector2(1, 0), new Vector2(1, 1), new Vector2(0, 1) };
+            mesh.triangles = new[] { 0, 1, 2, 0, 2, 3, 0, 2, 1, 0, 3, 2 };   // both windings (projection Y flip)
+            mesh.RecalculateBounds();
+            go.AddComponent<MeshFilter>().sharedMesh = mesh;
+            var r = go.AddComponent<MeshRenderer>();
+            r.sharedMaterial = material;
+            r.sortingLayerName = "LineOfSight";
+            r.sortingOrder = order;
+            r.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+            go.SetActive(false);
+            return go;
+        }
+
+        private void EnsureTexture()
+        {
+            int w = Screen.width, h = Screen.height;
+            if (rt != null && rt.width == w && rt.height == h) return;
+            if (rt != null) { uiCam.targetTexture = null; rt.Release(); Object.Destroy(rt); }
+            rt = new RenderTexture(w, h, 24, RenderTextureFormat.ARGB32, RenderTextureReadWrite.sRGB) { name = "CasualtyVR.UiTexture" };
+            rt.Create();
+            uiCam.targetTexture = rt;
+            uiCam.orthographicSize = h * 0.5f;
+            uiCam.transform.SetPositionAndRotation(new Vector3(w * 0.5f, h * 0.5f, -PlaneDistance), Quaternion.identity);
+            panelMaterial.mainTexture = rt;
+            additiveMaterial.mainTexture = rt;
+            if (additiveMaterial.HasProperty("_BaseMap")) additiveMaterial.SetTexture("_BaseMap", rt);
+            Plugin.Log.LogInfo($"UI texture {w}x{h}");
+        }
+
+        private void OnSceneLoaded(Scene scene, LoadSceneMode mode)
+        {
+            nextScan = 0f;
+            selfTestDone = false;
+        }
+
+        /// <summary>Per frame, before the eye cameras render.</summary>
+        public void Update(Vector3 focus, Camera logic, Vector3 seatedOrigin, float unitsPerMetre)
+        {
+            unitsPerMetreForCursor = VrSpace.Scale;
+            EnsureTexture();
+            if (Time.unscaledTime >= nextScan)
+            {
+                nextScan = Time.unscaledTime + 0.5f;
+                ConvertCanvases();
+            }
+
+            // Main menu / pre-run scene (no PlayerCamera): the whole screen is UI, so show it where the
+            // diorama is, opaque, covering the menu scene's starfield (user report: menu "too low", with a
+            // second "space/stars" window above it).
+            // Full-screen game states (main menu, death/end-of-run screen) are shown big at eye level. On the
+            // low dashboard the end screen's receipt and its click-to-continue text sat at the bottom edge of
+            // the headset's view (user report 2026-10-03: death screen not usable in VR).
+            // ...and the world-generation loading screen, which otherwise went to the additive HUD and showed
+            // the level through it (user report).
+            bool menuScene = PlayerCamera.main == null || EndScreenShown() || WorldGenerating();
+            theatre.SetActive(menuScene);
+            bool wasShown = DashboardShown;
+            DashboardShown = !menuScene && (ForceDashboard || MenuOpen());
+            if (DashboardShown != wasShown || menuScene != lastMenuScene)
+                Plugin.Log.LogInfo($"UI mode: {(menuScene ? "theatre (main menu / loading / end screen)" : DashboardShown ? "dashboard" : "HUD")}");
+            lastMenuScene = menuScene;
+            PlaceDesktopMirror();
+            hud.SetActive(!menuScene && !DashboardShown && logic != null);
+            dashboard.SetActive(DashboardShown);
+
+            float frontZ = -3f * PopupDepth.Scale - 0.05f;   // just in front of the frame (PopupDepth front band)
+            if (theatre.activeSelf)
+            {
+                // Sized in metres (not by zoom): at the diorama's full width the menu ran past both eyes' view.
+                float w = Plugin.MenuWidth.Value * unitsPerMetre;
+                theatre.transform.SetPositionAndRotation(new Vector3(focus.x, focus.y, frontZ), Quaternion.identity);
+                theatre.transform.localScale = new Vector3(w, w * rt.height / rt.width, 1f);
+            }
+            if (hud.activeSelf && VrSpace.FirstPerson)
+            {
+                // First person: the HUD is a see-through panel in front of you (tracking space), facing you.
+                float w = Plugin.MenuWidth.Value;
+                hud.transform.SetPositionAndRotation(VrSpace.Point(seatedOrigin + new Vector3(0f, -0.05f, Plugin.DioramaDistance.Value)), VrSpace.Rot(Quaternion.identity));
+                hud.transform.localScale = new Vector3(w, w * rt.height / rt.width, 1f) * VrSpace.Scale;
+            }
+            else if (hud.activeSelf)
+            {
+                float halfH = logic.orthographic ? logic.orthographicSize : 22.5f;
+                // On the game plane (z=0): the laser then hits one plane for world objects and HUD elements, so
+                // the cursor, beam end and click agree (playbook HUD-001). In front of it they parallaxed apart.
+                hud.transform.SetPositionAndRotation(new Vector3(focus.x, focus.y, 0f), Quaternion.identity);
+                hud.transform.localScale = new Vector3(halfH * 2f * logic.aspect, halfH * 2f, 1f);
+            }
+            if (dashboard.activeSelf)
+            {
+                // Seated-space pose: below and in front of the head, tilted to face it. First person, minigame: close
+                // and low, within reach, so the hand touches it (FP-4).
+                bool touchPanel = VrSpace.FirstPerson && MinigameBase.main != null && MinigameBase.main.currentMinigame && Plugin.FpMinigameTouch.Value;
+                Vector3 local = touchPanel ? new Vector3(0f, -0.32f, 0.42f) : new Vector3(0f, Plugin.DashboardHeight.Value, Plugin.DashboardDistance.Value);
+                Vector3 toward = (local - Vector3.zero).normalized;
+                Quaternion rot = Quaternion.LookRotation(toward, Vector3.up);
+                dashboard.transform.SetPositionAndRotation(VrSpace.Point(seatedOrigin + local), VrSpace.Rot(rot));
+                float wMetres = touchPanel ? 0.62f : Plugin.DashboardWidth.Value;
+                dashboard.transform.localScale = new Vector3(wMetres, wMetres * rt.height / rt.width, 1f) * VrSpace.Scale;
+            }
+
+            // Diagnostics once per scene, after the loading screen: in gameplay only once the world is generated.
+            bool settled = WorldGeneration.world == null
+                ? Time.timeSinceLevelLoad > 3f
+                : !WorldGeneration.world.generatingWorld && PlayerCamera.main != null && PlayerCamera.main.body != null;
+            if (!settled) settledSince = -1f;
+            else if (settledSince < 0f) settledSince = Time.unscaledTime;
+            if (!selfTestDone && converted.Count > 0 && settledSince >= 0f && Time.unscaledTime - settledSince > 3f) { if (Plugin.Verbose) { SelfTest(); ProbeAlpha(); } else selfTestDone = true; }
+        }
+
+        private void PlaceDesktopMirror()
+        {
+            var cam = Camera.main;
+            desktop.SetActive(cam != null && cam.orthographic);
+            if (!desktop.activeSelf) return;
+            float h = cam.orthographicSize * 2f;
+            desktop.transform.SetPositionAndRotation(cam.transform.position + cam.transform.forward * (cam.nearClipPlane + 0.05f), cam.transform.rotation);
+            desktop.transform.localScale = new Vector3(h * cam.aspect, h, 1f);
+        }
+
+        private static bool MenuOpen()
+        {
+            var pc = PlayerCamera.main;
+            if (pc == null) return false;   // main menu is handled by theatre mode
+            if (PauseHandler.paused || VrSettingsMenu.IsOpen) return true;
+            // First person: the inventory radial (opened at the chest) is used on the panel with the laser.
+            if (VrSpace.FirstPerson && pc.radialOpen) return true;
+            if (MinigameBase.main != null && MinigameBase.main.currentMinigame) return true;
+            if (ConsoleScript.instance != null && ConsoleScript.instance.active) return true;
+            if (Active(pc.woundView) || Active(pc.craftingPanel) || Active(pc.tradeMenu)) return true;
+            return false;
+        }
+
+        private static bool Active(GameObject go) => go != null && go.activeInHierarchy;
+
+        private static bool WorldGenerating() => WorldGeneration.world != null && WorldGeneration.world.generatingWorld;
+
+        /// <summary>True while the whole UI is shown as an opaque panel (main menu, loading, end screen).</summary>
+        public bool TheatreShown => theatre != null && theatre.activeSelf;
+
+        private static bool EndScreenShown()
+        {
+            var pc = PlayerCamera.main;
+            return pc != null && pc.endScreen != null && pc.endScreen.gameObject.activeInHierarchy;
+        }
+
+        private void ConvertCanvases()
+        {
+            foreach (var c in Object.FindObjectsOfType<Canvas>(true))
+            {
+                if (!c.isRootCanvas || c.renderMode != RenderMode.ScreenSpaceOverlay) continue;
+                if (converted.ContainsKey(c)) continue;
+                converted[c] = c.gameObject.layer;
+                c.renderMode = RenderMode.ScreenSpaceCamera;
+                c.worldCamera = uiCam;
+                c.planeDistance = PlaneDistance;
+                c.gameObject.layer = UiLayer;
+                Plugin.Log.LogInfo($"UI: '{c.name}' (order {c.sortingOrder}) -> UI camera");
+            }
+            // Forget destroyed canvases.
+            foreach (var dead in converted.Keys.Where(k => k == null).ToList()) converted.Remove(dead);
+        }
+
+        /// <summary>
+        /// Headless proof that input still maps: raycast the EventSystem at the screen position of an
+        /// active button in each converted canvas and require the button (or a child) to be hit.
+        /// </summary>
+        private void SelfTest()
+        {
+            selfTestDone = true;
+            var es = EventSystem.current;
+            if (es == null) { Plugin.Log.LogInfo("UI self-test: no EventSystem in this scene"); return; }
+            int tested = 0, hit = 0;
+            foreach (var c in converted.Keys)
+            {
+                if (c == null || !c.gameObject.activeInHierarchy) continue;
+                var button = c.GetComponentsInChildren<Selectable>().FirstOrDefault(s => s.isActiveAndEnabled && s.interactable && s.targetGraphic != null && s.targetGraphic.raycastTarget);
+                if (button == null) continue;
+                tested++;
+                Vector2 screen = RectTransformUtility.WorldToScreenPoint(uiCam, button.transform.position);
+                var results = new List<RaycastResult>();
+                es.RaycastAll(new PointerEventData(es) { position = screen }, results);
+                bool ok = results.Count > 0 && (results[0].gameObject == button.gameObject || results[0].gameObject.transform.IsChildOf(button.transform));
+                if (ok) hit++;
+                Plugin.Log.LogInfo($"UI self-test: '{c.name}/{button.name}' at {screen} -> {(results.Count > 0 ? results[0].gameObject.name : "nothing")} {(ok ? "OK" : "MISS")}");
+            }
+            Plugin.Log.LogInfo($"UI self-test: {hit}/{tested} buttons hit through the UI camera");
+        }
+
+        /// <summary>Diagnostic: RGBA of the UI texture at the centre and a corner region with no UI.</summary>
+        private void ProbeAlpha()
+        {
+            var prev = RenderTexture.active;
+            RenderTexture.active = rt;
+            var tex = new Texture2D(1, 1, TextureFormat.RGBA32, false);
+            foreach (var (name, x, y) in new[] { ("centre", rt.width / 2, rt.height / 2), ("mid-left", rt.width / 4, rt.height / 2) })
+            {
+                tex.ReadPixels(new Rect(x, y, 1, 1), 0, 0);
+                tex.Apply();
+                Plugin.Log.LogInfo($"UI alpha probe {name}: {tex.GetPixel(0, 0)} (format {rt.graphicsFormat}, cam HDR {uiCam.allowHDR}, target {uiCam.targetTexture?.name})");
+            }
+            var full = new Texture2D(rt.width, rt.height, TextureFormat.RGBA32, false);
+            full.ReadPixels(new Rect(0, 0, rt.width, rt.height), 0, 0);
+            full.Apply();
+            string path = System.IO.Path.Combine(BepInEx.Paths.BepInExRootPath, "CasualtyVR", "ui-texture.png");
+            System.IO.File.WriteAllBytes(path, full.EncodeToPNG());
+            Plugin.Log.LogInfo("UI texture dumped: " + path);
+            Object.Destroy(full);
+            RenderTexture.active = prev;
+            Object.Destroy(tex);
+            foreach (var c in converted.Keys)
+                if (c != null && c.gameObject.activeInHierarchy)
+                    foreach (var g in c.GetComponentsInChildren<Graphic>())
+                        if (g.isActiveAndEnabled && g.rectTransform.rect.width * g.transform.lossyScale.x >= rt.width * 0.9f)
+                            Plugin.Log.LogInfo($"UI full-screen graphic: {c.name}/{g.name} {g.GetType().Name} color {g.color} tex {(g.mainTexture ? g.mainTexture.name : "-")} raycast {g.raycastTarget}");
+        }
+
+        /// <summary>Draws the active overlay quads into an eye's finished image (call from endCameraRendering).</summary>
+        public void DrawInto(UnityEngine.Rendering.ScriptableRenderContext context, Camera eye, RenderTexture target)
+        {
+            overlayCmd.Clear();
+            overlayCmd.SetRenderTarget(target);
+            overlayCmd.ClearRenderTarget(true, false, Color.clear);   // depth only: overlays sit on top of the scene
+            // renderIntoTexture=false: URP already flips on its final copy into the eye texture (verified in capture: true drew the HUD upside down).
+            overlayCmd.SetViewProjectionMatrices(eye.worldToCameraMatrix, GL.GetGPUProjectionMatrix(eye.projectionMatrix, false));
+            int drawn = 0;
+            GameObject cursorPanel = null;
+            // Passthrough greenscreen: the frame after post, so the key colour is exact.
+            if (Frame != null && Frame.DrawnAfterPost && !VrSpace.FirstPerson)
+            {
+                overlayCmd.DrawMesh(Frame.Mesh, Frame.Matrix, Frame.KeyMaterial, 0, 0);
+                drawn++;
+            }
+            foreach (var go in new[] { hud, dashboard, theatre })
+            {
+                if (!go.activeSelf) continue;
+                var r = go.GetComponent<MeshRenderer>();
+                overlayCmd.DrawMesh(go.GetComponent<MeshFilter>().sharedMesh, go.transform.localToWorldMatrix, r.sharedMaterial, 0, 0);
+                drawn++;
+                cursorPanel = go;
+            }
+            drawn += FirstPerson.DrawOverlay(overlayCmd, eye);
+            drawn += VrHands.Draw(overlayCmd, eye);
+            // The OS cursor never reaches the headset: draw one where the mouse is on the active panel.
+            // A minigame draws the game's own hand at the mouse: no second cursor on top (user, 2026-10-04).
+            bool minigameHand = MinigameBase.main != null && MinigameBase.main.currentMinigame;
+            bool fpWorld = VrSpace.FirstPerson && !DashboardShown && !TheatreShown;
+            if (fpWorld)
+            {
+                // First person: the cursor is where the aim ray stops in the world (VrInput.WorldAim), as a small
+                // reticle of constant apparent size, drawn on top.
+                if (VrInput.LaserVisible && VrInput.LaserMode && Cursor.visible && !minigameHand && Plugin.CursorStyle.Value != "Off")
+                {
+                    Vector3 eyePos = eye.transform.position, at = VrInput.LaserEnd;
+                    Vector3 toEye = eyePos - at;
+                    float dist = toEye.magnitude;
+                    if (dist > 1e-3f)
+                    {
+                        float size = dist * 0.014f;
+                        var m = Matrix4x4.TRS(at + toEye * 0.05f, Quaternion.LookRotation(-toEye, eye.transform.up), new Vector3(size, size, size));
+                        overlayCmd.DrawMesh(reticleMesh, m, cursorMaterial, 0, 0);
+                        drawn++;
+                    }
+                }
+            }
+            else if (cursorPanel != null && Cursor.visible && !minigameHand)
+            {
+                // Cursor style (VR settings): the game's hand cut at the wrist, the arrow, or nothing.
+                string style = Plugin.CursorStyle.Value;
+                if (style == "Hand")
+                {
+                    if (!VrHands.DrawCursor(overlayCmd, CursorMatrix(cursorPanel, Plugin.HandCursorSize.Value)))
+                        overlayCmd.DrawMesh(cursorMesh, CursorMatrix(cursorPanel), cursorMaterial, 0, 0);
+                }
+                else if (style != "Off") overlayCmd.DrawMesh(cursorMesh, CursorMatrix(cursorPanel), cursorMaterial, 0, 0);
+            }
+            if (VrInput.LaserVisible && Plugin.ShowLaser.Value)   // off by default: user found the beam distracting; the cursor marks the hit
+            {
+                Vector3 a = VrInput.LaserOrigin, b = VrInput.LaserEnd;
+                float len = Vector3.Distance(a, b);
+                if (len > 1e-3f)
+                {
+                    float w = 0.003f * unitsPerMetreForCursor;
+                    var m = Matrix4x4.TRS(a, Quaternion.LookRotation(b - a), new Vector3(w, w, len));
+                    beamMaterial.color = VrInput.LaserHit ? new Color(0.55f, 0.85f, 1f, 0.8f) : new Color(0.55f, 0.85f, 1f, 0.3f);
+                    overlayCmd.DrawMesh(beamMesh, m, beamMaterial, 0, 0);
+                    drawn++;
+                }
+            }
+            if (drawn == 0) return;
+            context.ExecuteCommandBuffer(overlayCmd);
+            context.Submit();
+        }
+
+        /// <summary>
+        /// The laser's single hit record: the visible theatre or dashboard panel if hit, else the game plane
+        /// (the HUD quad spans exactly the flat camera's view). Returns the screen pixel the game should see.
+        /// </summary>
+        public bool RaycastActiveSurface(Ray ray, out Vector2 screen, out Vector3 point)
+        {
+            foreach (var panel in new[] { theatre, dashboard, hud })
+            {
+                if (panel == null || !panel.activeSelf) continue;
+                if (panel == hud && VrSpace.FirstPerson) continue;   // first person aims into the world (VrInput.WorldAim)
+                var t = panel.transform;
+                var plane = new Plane(t.forward, t.position);
+                if (!plane.Raycast(ray, out float dist) || dist <= 0f) continue;
+                point = ray.GetPoint(dist);
+                Vector3 local = t.InverseTransformPoint(point);
+                float u = local.x + 0.5f, v = local.y + 0.5f;
+                if (u < 0f || u > 1f || v < 0f || v > 1f) continue;
+                screen = new Vector2(u * rt.width, v * rt.height);
+                return true;
+            }
+            screen = Vector2.zero;
+            point = Vector3.zero;
+            return false;
+        }
+
+        /// <summary>
+        /// First person, minigames (FP-4): the hand itself is the pointer. If the point is within a few centimetres
+        /// of the dashboard's surface, the mouse goes where it touches.
+        /// </summary>
+        public bool TouchDashboard(Vector3 point, out Vector2 screen, out Vector3 onPanel)
+        {
+            screen = Vector2.zero;
+            onPanel = point;
+            if (dashboard == null || !dashboard.activeSelf) return false;
+            var t = dashboard.transform;
+            Vector3 local = t.InverseTransformPoint(point);   // x, y in panel units; z in metres (the z scale is the world scale)
+            float u = local.x + 0.5f, v = local.y + 0.5f;
+            if (u < -0.05f || u > 1.05f || v < -0.05f || v > 1.05f || local.z < -0.10f || local.z > 0.15f) return false;
+            u = Mathf.Clamp01(u);
+            v = Mathf.Clamp01(v);
+            screen = new Vector2(u * rt.width, v * rt.height);
+            onPanel = t.TransformPoint(new Vector3(u - 0.5f, v - 0.5f, 0f));
+            return true;
+        }
+
+        private static Mesh CreateBeamMesh()
+        {
+            // Unit box from z=0 to z=1, x/y in [-0.5, 0.5]; scaled to the beam's width and length.
+            var m = new Mesh { name = "CasualtyVR.Beam" };
+            var v = new List<Vector3>();
+            for (int i = 0; i < 8; i++) v.Add(new Vector3((i & 1) == 0 ? -0.5f : 0.5f, (i & 2) == 0 ? -0.5f : 0.5f, (i & 4) == 0 ? 0f : 1f));
+            m.SetVertices(v);
+            int[] faces = { 0, 2, 3, 1, 4, 5, 7, 6, 0, 1, 5, 4, 2, 6, 7, 3, 0, 4, 6, 2, 1, 3, 7, 5 };
+            var tris = new List<int>();
+            for (int f = 0; f < faces.Length; f += 4)
+            {
+                int a = faces[f], b = faces[f + 1], c = faces[f + 2], d = faces[f + 3];
+                tris.AddRange(new[] { a, b, c, a, c, d, a, c, b, a, d, c });
+            }
+            m.SetTriangles(tris, 0);
+            m.RecalculateBounds();
+            return m;
+        }
+
+        private Matrix4x4 CursorMatrix(GameObject panel) => CursorMatrix(panel, Plugin.CursorSize.Value);
+
+        private Matrix4x4 CursorMatrix(GameObject panel, float sizeMetres)
+        {
+            Vector3 mouse = Input.mousePosition;
+            var local = new Vector3(Mathf.Clamp01(mouse.x / rt.width) - 0.5f, Mathf.Clamp01(mouse.y / rt.height) - 0.5f, 0f);
+            var t = panel.transform;
+            Vector3 pos = t.TransformPoint(local) - t.forward * (0.002f * unitsPerMetreForCursor);   // a hair in front of the panel
+            float size = sizeMetres * unitsPerMetreForCursor;
+            return Matrix4x4.TRS(pos, t.rotation, new Vector3(size, size, size));
+        }
+
+        private static Mesh CreateReticleMesh()
+        {
+            // Diamond: black outline, white centre (vertex colours), unit size, centred on the origin.
+            var m = new Mesh { name = "CasualtyVR.Reticle" };
+            m.vertices = new[] { new Vector3(0f, 0.5f), new Vector3(0.5f, 0f), new Vector3(0f, -0.5f), new Vector3(-0.5f, 0f),
+                                 new Vector3(0f, 0.28f), new Vector3(0.28f, 0f), new Vector3(0f, -0.28f), new Vector3(-0.28f, 0f) };
+            m.colors = new[] { Color.black, Color.black, Color.black, Color.black, Color.white, Color.white, Color.white, Color.white };
+            m.triangles = new[] { 0, 1, 2, 0, 2, 3, 0, 2, 1, 0, 3, 2, 4, 5, 6, 4, 6, 7, 4, 6, 5, 4, 7, 6 };
+            m.RecalculateBounds();
+            return m;
+        }
+
+        private static Mesh CreateCursorMesh()
+        {
+            // Arrow with its tip at the origin: black outline triangle, white inner triangle (vertex colours).
+            var m = new Mesh { name = "CasualtyVR.Cursor" };
+            m.vertices = new[] { new Vector3(-0.08f, 0.1f), new Vector3(-0.08f, -1.12f), new Vector3(0.84f, -0.7f),
+                                 new Vector3(0f, 0f), new Vector3(0f, -0.9f), new Vector3(0.62f, -0.62f) };
+            m.colors = new[] { Color.black, Color.black, Color.black, Color.white, Color.white, Color.white };
+            m.triangles = new[] { 0, 1, 2, 0, 2, 1, 3, 4, 5, 3, 5, 4 };
+            m.RecalculateBounds();
+            return m;
+        }
+
+        public void Destroy()
+        {
+            overlayCmd.Release();
+            Object.Destroy(cursorMesh);
+            Object.Destroy(beamMesh);
+            Object.Destroy(reticleMesh);
+            Object.Destroy(beamMaterial);
+            Object.Destroy(cursorMaterial);
+            SceneManager.sceneLoaded -= OnSceneLoaded;
+            ScreenPassFilter.Forget(uiCam);
+            foreach (var kv in converted)
+            {
+                if (kv.Key == null) continue;
+                kv.Key.renderMode = RenderMode.ScreenSpaceOverlay;
+                kv.Key.worldCamera = null;
+                kv.Key.gameObject.layer = kv.Value;
+            }
+            converted.Clear();
+            Object.Destroy(hud);
+            Object.Destroy(dashboard);
+            Object.Destroy(theatre);
+            Object.Destroy(desktop);
+            Object.Destroy(uiCam.gameObject);
+            if (rt != null) { rt.Release(); Object.Destroy(rt); }
+            Object.Destroy(panelMaterial);
+            Object.Destroy(additiveMaterial);
+        }
+    }
+}

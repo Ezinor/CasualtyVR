@@ -1,0 +1,36 @@
+# Game copies, decompiled game code, captures, backups and release builds: never published
+# (release zips go on the GitHub Releases page).
+/Working/
+/dist/
+
+# Third-party tools and references live in their own repositories (see CLAUDE.md).
+/Tools/*/
+/VR Modding Playbook/
+
+# Machine-specific
+/.mcp.json
+CLAUDE.local.md
+.claude/
+.vs/
+*.csproj.user
+
+# Build output
+/src/*/bin/
+/src/*/obj/
+/src/CasualtyVR.XrBridge/build/
+/src/CasualtyVR.Shaders/Library/
+/src/CasualtyVR.Shaders/Logs/
+/src/CasualtyVR.Shaders/Temp/
+/src/CasualtyVR.Shaders/UserSettings/
+
+# Unused by the build
+/third_party/unity-pluginapi/
+
+# OpenXR SDK: keep only the headers, the x64 import library, the loader DLL and the licence.
+/third_party/openxr_loader_windows-*.zip
+/third_party/openxr-*/ARM64_uwp/
+/third_party/openxr-*/Win32/
+/third_party/openxr-*/Win32_uwp/
+/third_party/openxr-*/x64_uwp/
+/third_party/openxr-*/x64/bin/*
+!/third_party/openxr-*/x64/bin/openxr_loader.dll
