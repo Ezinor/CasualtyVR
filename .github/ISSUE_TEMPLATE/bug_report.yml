@@ -1,0 +1,61 @@
+name: Bug report
+description: Something doesn't work or looks wrong in VR.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. A log makes most problems quick to find:
+        1. In `BepInEx\config\casualtyvr.core.cfg`, set `VerboseLog = true` under `[Debug]`.
+        2. Reproduce the problem, then quit the game.
+        3. Attach `BepInEx\LogOutput.log` below (drag the file into the box).
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What you did, what you expected, and what you saw instead. Screenshots or a short video help.
+    validations:
+      required: true
+  - type: dropdown
+    id: view
+    attributes:
+      label: View
+      options:
+        - Diorama (default)
+        - First person (F7)
+        - Both
+        - Doesn't get that far (VR won't start)
+    validations:
+      required: true
+  - type: input
+    id: headset
+    attributes:
+      label: Headset and controllers
+      placeholder: e.g. Meta Quest 3 with Touch controllers
+    validations:
+      required: true
+  - type: input
+    id: runtime
+    attributes:
+      label: OpenXR runtime
+      placeholder: e.g. Virtual Desktop (VDXR), SteamVR, Quest Link, WMR
+    validations:
+      required: true
+  - type: input
+    id: versions
+    attributes:
+      label: CasualtyVR and game version
+      placeholder: e.g. CasualtyVR 1.2.0, Casualties Unknown Demo 7.0.1
+    validations:
+      required: true
+  - type: input
+    id: system
+    attributes:
+      label: System
+      description: Windows version (or Linux distro + Proton version) and graphics card.
+      placeholder: e.g. Windows 11, RTX 3070
+  - type: textarea
+    id: log
+    attributes:
+      label: Log
+      description: Drag `BepInEx\LogOutput.log` here (with `VerboseLog = true`).
