@@ -15,6 +15,10 @@ namespace CasualtyVR
     ///   you look (lazily, by yaw only), drawn over everything at a readable size.
     /// * Other texts stay where the game puts them, moved into the middle of the tunnel and turned to face you, and
     ///   scaled up if they would be too small to read from where you are.
+    /// * Character attachments (2026-10-17, the co-op mod): sprites and texts that hang off a character's root next
+    ///   to its Body (not part of it, no collider) are status icons and labels. The icons turn to face you (they
+    ///   were seen edge-on); a name tag (TextMeshPro named "CharacterNametag_...", placed by the co-op mod under the
+    ///   feet, where it was lost in the floor) goes just above the head instead.
     /// The monitor view is unchanged: everything is put back after each eye.
     /// </summary>
     internal sealed class WorldText
@@ -23,6 +27,13 @@ namespace CasualtyVR
         private const float MinLineRadians = 0.03f;   // about 1.7 degrees per line of text
 
         private readonly List<TextMeshPro> texts = new List<TextMeshPro>();
+        private readonly Dictionary<TextMeshPro, Body> tagOwners = new Dictionary<TextMeshPro, Body>();
+        private readonly List<SpriteRenderer> indicators = new List<SpriteRenderer>();
+        private const float AttachmentRange = 60f;      // blocks from the player
+        private const float NameTagAboveHead = 1.6f;    // blocks above the head limb
+        private const float MaxTagLineRadians = 0.05f;  // about 3 degrees per line of a name tag
+        private const float MaxIconRadians = 0.07f;     // about 4 degrees for a status icon
+        private int lastAttachmentCount;
         private readonly List<(Transform t, Vector3 pos, Quaternion rot, Vector3 scale, Renderer r, int layer, int order)> moved = new List<(Transform, Vector3, Quaternion, Vector3, Renderer, int, int)>();
         private readonly HashSet<TextMeshPro> onTop = new HashSet<TextMeshPro>();
         private float nextScan;
@@ -58,6 +69,7 @@ namespace CasualtyVR
                 nextScan = Time.unscaledTime + 1f;
                 texts.Clear();
                 texts.AddRange(Object.FindObjectsOfType<TextMeshPro>());
+                ScanAttachments();
             }
             var body = PlayerCamera.main != null ? PlayerCamera.main.body : null;
             if (body != talkerBody)
@@ -72,6 +84,34 @@ namespace CasualtyVR
             f.Normalize();
             captionDir = hasDir ? Vector3.Slerp(captionDir, f, 1f - Mathf.Exp(-2.5f * Time.unscaledDeltaTime)) : f;
             hasDir = true;
+        }
+
+        // Direct children of each nearby character's root, other than its Body: the co-op mod's name tag and status
+        // icons (its "chara" object is the Body's parent). A root shared by many objects is not a character.
+        private void ScanAttachments()
+        {
+            tagOwners.Clear();
+            indicators.Clear();
+            var player = PlayerCamera.main != null ? PlayerCamera.main.body : null;
+            Vector2 c = player != null ? (Vector2)player.transform.position : Vector2.zero;
+            foreach (var b in Object.FindObjectsOfType<Body>())
+            {
+                if (b == player || b.limbs == null || b.limbs.Length == 0 || b.limbs[0] == null) continue;
+                var root = b.transform.parent;
+                if (root == null || root.childCount > 16) continue;
+                if (((Vector2)b.transform.position - c).sqrMagnitude > AttachmentRange * AttachmentRange) continue;
+                for (int i = 0; i < root.childCount; i++)
+                {
+                    var child = root.GetChild(i);
+                    if (child == b.transform || child.GetComponent<Collider2D>() != null || child.GetComponent<Body>() != null) continue;
+                    if (child.TryGetComponent<TextMeshPro>(out var tmp)) { if (tmp.name.StartsWith("CharacterNametag_")) tagOwners[tmp] = b; }
+                    else if (child.TryGetComponent<SpriteRenderer>(out var sr)) indicators.Add(sr);
+                }
+            }
+            int found = tagOwners.Count + indicators.Count;
+            if (Plugin.Verbose && found != lastAttachmentCount)
+                Plugin.Log.LogInfo($"WorldText: {tagOwners.Count} name tags, {indicators.Count} status icons on other characters");
+            lastAttachmentCount = found;
         }
 
         private void OnBegin(ScriptableRenderContext ctx, Camera cam)
@@ -97,6 +137,15 @@ namespace CasualtyVR
                     OnTop(text);
                     if (r != null) { r.sortingLayerID = TopLayer; r.sortingOrder = 32000; }
                 }
+                else if (tagOwners.TryGetValue(text, out var owner) && owner != null && owner.limbs[0] != null)
+                {
+                    // Name tag: above the head (the co-op mod puts it under the feet, in the floor in first person).
+                    pos = owner.limbs[0].transform.position + Vector3.up * NameTagAboveHead;
+                    pos.z = FirstPerson.EyeZ;
+                    // Readable but not huge: the tag is sized for the flat view, where it covered a metre at arm's length.
+                    float d = Vector3.Distance(head, pos);
+                    if (line > 0f) k = Mathf.Clamp(line, MinLineRadians * d, MaxTagLineRadians * d) / line;
+                }
                 else
                 {
                     pos = t.position;
@@ -114,6 +163,19 @@ namespace CasualtyVR
                 {
                     Plugin.Log.LogInfo($"WorldText: {(text == ownText ? "caption" : "facing")} '{text.text}' line {line:F2} units x{k:F2} at {pos}");
                 }
+            }
+            // Status icons (flat sprites in the play plane) turn to face you where they are.
+            foreach (var sr in indicators)
+            {
+                if (sr == null || !sr.enabled || !sr.gameObject.activeInHierarchy || sr.sprite == null) continue;
+                var t = sr.transform;
+                moved.Add((t, t.position, t.rotation, t.localScale, null, 0, 0));
+                Vector3 pos = t.position;
+                pos.z = FirstPerson.EyeZ;
+                t.SetPositionAndRotation(pos, Quaternion.LookRotation(pos - head, Vector3.up));
+                // Sized for the flat view: near you it filled the view. At most MaxIconRadians tall.
+                float h = sr.bounds.size.y, dist = Vector3.Distance(head, pos);
+                if (h > MaxIconRadians * dist && h > 1e-4f) t.localScale *= MaxIconRadians * dist / h;
             }
             Shown = shown;
             FirstPerson.RenderTime.Stop();

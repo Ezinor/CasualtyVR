@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.2.2 — 2026-10-17 (test build)
+
+**Other mods' windows in VR** (user report with the Casualties Together co-op mod)
+
+- **Windows that other mods draw are now shown in the headset**, on top of the game's own menus and HUD: the co-op
+  mod's menus, its player-interaction window (right-click / grip on another player), its chat and player list, and
+  any other mod that draws with Unity's OnGUI. The monitor shows them as before.
+- **The laser works on them:** pointing hovers, the trigger clicks (left button) and the grip right-clicks. Your real
+  mouse cursor is not moved.
+- **First person:** these windows appear on the see-through panel in front of you. Point at a window to use it;
+  point anywhere else and you aim into the world as before.
+- **Other players' name tags** (co-op mod) show above their heads in first person, facing you at a readable size
+  (they were under their feet), and their **status icons** (such as the alt-tab icon) face you instead of being seen
+  edge-on.
+
 ## 1.2.1 — 2026-10-17 (test build)
 
 **Fixes**

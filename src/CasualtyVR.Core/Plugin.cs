@@ -16,7 +16,7 @@ namespace CasualtyVR
     public class Plugin : BaseUnityPlugin
     {
         public const string Guid = "casualtyvr.core";
-        public const string Version = "1.2.1";
+        public const string Version = "1.2.2";
         /// <summary>The game version this release was tested with (Application.version).</summary>
         public const string TestedGameVersion = "7.0.1";
         /// <summary>Another game version: logged at start, and noticed on the monitor when VR starts (FAIL-PACK-015).</summary>

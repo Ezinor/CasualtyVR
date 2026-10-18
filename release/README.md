@@ -1,4 +1,4 @@
-# CasualtyVR 1.2.1
+# CasualtyVR 1.2.2
 
 A VR mod for **Casualties: Unknown** (Demo, game version 7.0.1). It shows the game as a 3D diorama in front of
 you: the terrain becomes solid blocks, liquids fill their tunnels, and characters and objects get real depth.
@@ -161,6 +161,8 @@ welcome. What it needs:
   colour stays exact.
 - Very busy scenes (heavy rain, many creatures) can drop below 90 fps.
 - Only the Demo 7.0.1 has been tested. Other game versions and other mods are untested.
+- Other mods' windows (drawn with Unity's OnGUI, like the Casualties Together co-op mod's menus and chat) are shown
+  in the headset and work with the laser; typing (chat) still needs the keyboard.
 - The controller hands and the hand cursor use the game's own hand art.
 - First person is experimental. The game is drawn in 2D, so its lights, flat images and 2D shadows are adapted to
   work from inside the world: lighting is approximate, and creatures are seen side-on.

@@ -308,8 +308,51 @@ namespace CasualtyVR
                 try { VrInput.Update(input, ui, Focus(), seatedOrigin, Plugin.UnitsPerMetre.Value, posesFresh: false); }
                 catch (Exception e) { Fail("controls", e); }
             }
+            // The laser's mouse buttons reach mods' OnGUI windows too.
+            if (On("mod windows")) try { ImguiCapture.QueueClicks(); } catch (Exception e) { Fail("mod windows", e); }
             foreach (var eye in eyes)
                 if (eye) eye.enabled = render && !DbgNoEyes;
+        }
+
+        // --cvr-dbg-clone: a copy of the player's character a few blocks to the right, as the co-op mod makes other
+        // players (it instantiates the local character), with test labels on it.
+        private bool cloned;
+
+        private void CloneTestCharacter()
+        {
+            cloned = true;
+            var body = PlayerCamera.main.body;
+            var chara = body.transform.parent != null ? body.transform.parent.gameObject : body.gameObject;
+            var copy = Instantiate(chara, chara.transform.position + new Vector3(6f, 0f, 0f), chara.transform.rotation);
+            copy.name = "CasualtyVR.TestCharacter";
+            var cb = copy.GetComponentInChildren<Body>();
+            Plugin.Log.LogInfo($"Clone test: '{chara.name}' copied, body {(cb != null ? cb.name : "none")} at {(cb != null ? cb.transform.position.ToString() : "-")}");
+            if (cb != null) AttachTestLabels(cb);
+        }
+
+        private static void AttachTestLabels(Body body)
+        {
+            var root = body.transform.parent;
+            Plugin.Log.LogInfo($"Attach test: body '{body.name}' root '{(root != null ? root.name : "none")}' children {(root != null ? root.childCount : 0)} head {body.limbs[0].transform.position}");
+            if (root == null) return;
+            var prefab = Resources.Load("special/ExpTalkText") as GameObject;
+            if (prefab != null)
+            {
+                var tag = Instantiate(prefab, root);
+                tag.SetActive(true);
+                tag.name = "CharacterNametag_Test";
+                var tmp = tag.GetComponent<TMPro.TextMeshPro>();
+                if (tmp != null) { tmp.text = "Test player"; tmp.color = new Color(0.4f, 1f, 0.6f, 0.87f); }
+                tag.transform.position = (Vector2)body.transform.position - Vector2.up * 3f;
+            }
+            var icon = new GameObject("KrokoshaMP_CharacterStatusIcon_Test");
+            icon.transform.SetParent(root, false);
+            var sr = icon.AddComponent<SpriteRenderer>();
+            sr.sprite = Sprite.Create(Texture2D.whiteTexture, new Rect(0, 0, 4, 4), new Vector2(0.5f, 0.5f), 4f);
+            sr.color = new Color(1f, 0.6f, 0.1f, 0.87f);
+            sr.sortingOrder = 6000;
+            icon.transform.position = (Vector2)body.limbs[0].transform.position + Vector2.up * 2f;
+            Plugin.Log.LogInfo($"Attach test: tag at {(prefab != null ? root.Find("CharacterNametag_Test").position.ToString() : "-")}, icon at {icon.transform.position}");
         }
 
         /// <summary>Headless test hooks (command-line flags only; nothing here runs in a normal game).</summary>
@@ -322,6 +365,9 @@ namespace CasualtyVR
                 manualRecenter = true;
                 Plugin.Log.LogInfo("Recenter test: requested");
             }
+            if (!cloned && Array.IndexOf(Args, "--cvr-dbg-clone") >= 0 && Time.timeSinceLevelLoad > 16f && PlayerCamera.main != null && PlayerCamera.main.body != null
+                && WorldGeneration.world != null && !WorldGeneration.world.generatingWorld)
+                CloneTestCharacter();
             // --cvr-dbg-throw <s>: this hook throws at that level time (fault-isolation test: VR must keep running).
             if (DbgThrowAt > 0f && Time.timeSinceLevelLoad > DbgThrowAt)
                 throw new InvalidOperationException("--cvr-dbg-throw test exception");
@@ -336,6 +382,10 @@ namespace CasualtyVR
                 else
                 {
                     var go = (GameObject)Instantiate(res, PlayerCamera.main.body.transform.position + new Vector3((Array.IndexOf(Args, "--cvr-dbg-spawn-near") >= 0 ? 0.5f : 2.5f) + 1.5f * spawnIndex, 1f, 0f), Quaternion.identity);
+                    // --cvr-dbg-attach: a co-op-mod-style name tag and status icon on the spawned character (e.g. corpse),
+                    // as Casualties Together makes them: siblings of the Body under its root (WorldText test).
+                    if (Array.IndexOf(Args, "--cvr-dbg-attach") >= 0 && go.GetComponentInChildren<Body>() is Body tb)
+                        AttachTestLabels(tb);
                     // --cvr-dbg-hold: the first spawned item goes into the character's active hand.
                     if (spawnIndex == 0 && Array.IndexOf(Args, "--cvr-dbg-hold") >= 0 && go.TryGetComponent<Item>(out var heldItem))
                     {
@@ -457,6 +507,7 @@ namespace CasualtyVR
             while (true)
             {
                 yield return wait;
+                if (Active) try { ImguiCapture.EndOfFrame(); } catch (Exception e) { Plugin.Log.LogError("IMGUI capture: " + e); }
                 if (Active && waitedThisFrame)
                 {
                     waitedThisFrame = false;
@@ -549,6 +600,7 @@ namespace CasualtyVR
             extruder = new ObjectExtruder();
             liquids = new LiquidVolume();
             ui = new VrUi { Frame = frame };
+            if (Array.IndexOf(Args, "--cvr-dbg-noimgui") < 0) ImguiCapture.Start();   // flag: cost A/B
             greenscreen = new Greenscreen();
             rain = new VrRain();
             worldText = new WorldText();
@@ -617,6 +669,7 @@ namespace CasualtyVR
             particles?.Restore();
             particles = null;
             postOverride = null;
+            ImguiCapture.Stop();
             ui?.Destroy();
             ui = null;
             frame = null;
@@ -771,7 +824,7 @@ namespace CasualtyVR
             if (Plugin.Verbose && VrSpace.FirstPerson && eyes[0] != null) Plugin.Log.LogInfo($"fp: eye {eyes[0].transform.position} fwd {eyes[0].transform.forward} rot {VrSpace.Rotation.eulerAngles} scale {VrSpace.Scale:F2} facingRight {FirstPerson.FacingRightNow} billboards {FirstPerson.BillboardGroups} standing {(body != null && body.standing)} fpUpdate {FirstPerson.UpdateTime.Elapsed.TotalMilliseconds / Mathf.Max(1, statFrames):F2} ms/frame fpRender {FirstPerson.RenderTime.Elapsed.TotalMilliseconds / Mathf.Max(1, statFrames):F2} ms/frame popup {PopupDepth.LastApplyMs:F2} ms texts {(worldText != null ? worldText.Shown : 0)} rain {(rain != null ? $"{rain.Particles} playing {rain.Playing} alpha {(WorldGeneration.world != null && WorldGeneration.world.rainSprite != null ? WorldGeneration.world.rainSprite.color.a : -1f):F2}" : "-")}");
             FirstPerson.UpdateTime.Reset();
             FirstPerson.RenderTime.Reset();
-            if (Plugin.Verbose) Plugin.Log.LogInfo($"input: laser={(VrInput.LaserMode ? "on" : "off")} hit={VrInput.LaserHit} mouse={VrInput.VirtualMouse} held=[{VrInput.HeldList()}] body={(body != null ? body.transform.position.ToString() : "-")} profile='{VrInput.Profile}'");
+            if (Plugin.Verbose) Plugin.Log.LogInfo($"input: laser={(VrInput.LaserMode ? "on" : "off")} hit={VrInput.LaserHit} modWindow={VrInput.OnModWindow} mouse={VrInput.VirtualMouse} held=[{VrInput.HeldList()}] body={(body != null ? body.transform.position.ToString() : "-")} profile='{VrInput.Profile}'");
             nextLogPump = Time.unscaledTime + 2f;
             statFrames = 0;
             statWorst = 0f;

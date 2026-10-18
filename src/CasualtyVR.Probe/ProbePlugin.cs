@@ -51,6 +51,8 @@ namespace CasualtyVR.Probe
             host.hideFlags = HideFlags.HideAndDontSave;
             DontDestroyOnLoad(host);
             host.AddComponent<ProbeRunner>();
+            // --cvr-dbg-imgui: a mod-style OnGUI window for the IMGUI capture test (tools/vr-lifecycle.ps1 -Only imgui).
+            if (Array.IndexOf(Environment.GetCommandLineArgs(), "--cvr-dbg-imgui") >= 0) host.AddComponent<ImguiTestWindow>();
         }
 
         internal static string WriteReport(string label, FrameStats frameStats = null)

@@ -23,6 +23,9 @@ Machine-specific notes, if any, are in `CLAUDE.local.md` (not in git).
 - Review plan: docs/IMPROVEMENT_PLAN.md (groups A–E). Group A (input/session lifecycle, recenter heading, fault isolation,
   bridge log `BepInEx/CasualtyVR-bridge.log`): docs/LIFECYCLE_RECEIPT.md, test `tools/vr-lifecycle.ps1` (xr-sim session states,
   focus, validity; flags `--cvr-dbg-recenter <s>`, `--cvr-dbg-throw <s>`). Read the Unity player log in tests, not LogOutput.log (buffered).
+- Mods' OnGUI windows in VR (1.2.2, `ImguiCapture`): docs/IMGUI_RECEIPT.md; `vr-lifecycle.ps1 -Only imgui`. Flags `--cvr-dbg-imgui`
+  (probe test window), `--cvr-dbg-imgui-dump`, `--cvr-dbg-clone` (co-op-style remote player with name tag/icon), `--cvr-dbg-noimgui`.
+  Co-op mod (Casualties Together) facts: docs/COMPATIBILITY.md.
 - Release 1.2.0: docs/RELEASE_1.2.md; headsets/Proton: docs/COMPATIBILITY.md. Flags: `--cvr-dbg-lockpick` (with `--cvr-dbg-spawn dropcapsule`),
   `--cvr-dbg-fpoff <s>` (speed restore), `--cvr-dbg-settings all` (cycles tabs), `--cvr-dbg-dumphands` (logs full-rect tool tips: use those, not the trimmed PNGs).
   Smoke test: `tools/fp-smoke.ps1` (xr-sim head/hand scripts; flags `--cvr-dbg-fp`, `--cvr-dbg-cave`, `--cvr-dbg-spawn a,b`, `--cvr-dbg-hold`).

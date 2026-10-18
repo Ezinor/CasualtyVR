@@ -46,6 +46,8 @@ namespace CasualtyVR
         public static Vector3 LaserEnd { get; private set; }
         public static bool LaserVisible { get; private set; }
         public static string Profile { get; private set; } = "";
+        /// <summary>First person: the laser points at a mod's OnGUI window on the HUD panel.</summary>
+        public static bool OnModWindow { get; private set; }
 
         private static HashSet<KeyCode> held = new HashSet<KeyCode>();
         private static HashSet<KeyCode> prevHeld = new HashSet<KeyCode>();
@@ -266,11 +268,13 @@ namespace CasualtyVR
             if (pointerActivity) lastControllerActivity = now;
             lastAimDir = dir;
             Vector3 real = InputPatches.RealMousePosition();
-            if ((real - lastRealMouse).sqrMagnitude > 4f) lastMouseActivity = now;
+            // The laser's own pointer messages (ImguiCapture) move Unity's mouse too: that is not the player's mouse.
+            if ((real - lastRealMouse).sqrMagnitude > 4f && !ImguiCapture.IsOwnPosition(real)) lastMouseActivity = now;
             lastRealMouse = real;
             // One hit record (HUD-001): the active surface decides.
             Vector2 screen;
             Vector3 hitPoint;
+            OnModWindow = false;
             if (VrSpace.FirstPerson && !ui.DashboardShown)
             {
                 if (Plugin.FpAimWith.Value == "Head")
@@ -280,7 +284,13 @@ namespace CasualtyVR
                     LaserOrigin = origin;
                     lastControllerActivity = Time.unscaledTime;   // the gaze owns the mouse
                 }
-                LaserHit = WorldAim(origin, dir, out screen, out hitPoint);
+                // A mod's OnGUI window (ImguiCapture) shows on the HUD panel in front of you: pointing at it uses it.
+                if (ImguiCapture.Running && ui.RaycastHud(new Ray(origin, dir), out screen, out hitPoint) && ImguiCapture.Covers(screen))
+                {
+                    OnModWindow = true;
+                    LaserHit = true;
+                }
+                else LaserHit = WorldAim(origin, dir, out screen, out hitPoint);
             }
             else if (VrSpace.FirstPerson && MinigameBase.main != null && MinigameBase.main.currentMinigame && Plugin.FpMinigameTouch.Value
                      && ui.TouchDashboard(origin, out screen, out hitPoint))

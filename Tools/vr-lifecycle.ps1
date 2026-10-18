@@ -11,13 +11,16 @@
 #   heading  the F9 recenter (--cvr-dbg-recenter) takes the head's heading; the runtime EXITING state stops VR
 #   faults   an exception in one feature (--cvr-dbg-throw) turns that feature off and VR keeps submitting; instance
 #            loss stops VR
+#   imgui    a mod's OnGUI window (--cvr-dbg-imgui) is captured into the headset and takes laser hover and clicks, in
+#            the diorama and in first person; a co-op-style name tag and icon (--cvr-dbg-clone) are found
 [CmdletBinding()]
 param([string[]]$Only = @())
 $ErrorActionPreference = "Stop"
 $root = Resolve-Path (Join-Path $PSScriptRoot "..")
 $d = "$env:LOCALAPPDATA\xr-sim\casualtyvr"
 $t = Join-Path $root "Tools\xr-sim\tools"
-$log = Join-Path $root "Working\game-dev\BepInEx\LogOutput.log"
+$bepinexLog = Join-Path $root "Working\game-dev\BepInEx\LogOutput.log"
+$log = $bepinexLog   # switched to the run's Unity player log by Start-Game
 $bridgeLog = Join-Path $root "Working\game-dev\BepInEx\CasualtyVR-bridge.log"
 $results = New-Object System.Collections.Generic.List[object]
 
@@ -43,7 +46,8 @@ function Stop-Game { Get-Process CasualtiesUnknown -ErrorAction SilentlyContinue
 function Start-Game([string[]]$extra) {
     Stop-Game
     # The new process truncates the log only once BepInEx starts: until then the last run's lines would match.
-    Remove-Item $log -ErrorAction SilentlyContinue
+    Remove-Item $bepinexLog -ErrorAction SilentlyContinue
+    $script:log = $bepinexLog
     Remove-Item $bridgeLog, ($bridgeLog -replace '\.log$', '.prev.log') -ErrorAction SilentlyContinue
     $args2 = @("--cvr-vr", "--cvr-autostart", "--cvr-seed", "1234") + $extra
     $started = Get-Date
@@ -57,7 +61,9 @@ function Start-Game([string[]]$extra) {
     } while ($null -eq $newest -and (Get-Date) -lt $deadline)
     if ($newest) { $script:log = $newest.FullName }
     # World generation runs at ~1 fps (xr-sim commands time out then): ready = the frame rate is back with 3D blocks.
-    $ready = Wait-For "perf: (8\d|9\d)\.\d fps.* voxels [1-9]" 180
+    # Over 50 fps, not 80: whole runs of this machine sat at ~74 fps (2026-10-17), which is not what is tested here.
+    $ready = Wait-For "perf: ([5-9]\d)\.\d fps.* voxels [1-9]" 180
+    Start-Sleep 2
     C @("input clear")
     Start-Sleep 2
     return $ready
@@ -125,7 +131,7 @@ if (Want "input") {
 }
 
 if (Want "heading") {
-    $ready = Start-Game @("--cvr-dbg-recenter", "45")
+    $ready = Start-Game @("--cvr-dbg-recenter", "60")
     Check "heading: game ready" $ready ""
     C @("head rot 60 0 0")
     $re = Wait-For "Recentered \(key\).*heading (60|300)\.0 deg" 60
@@ -157,6 +163,36 @@ if (Want "faults") {
     C @("instanceloss")
     Check-Stopped "faults: instance loss"
     Check-NoExceptions "faults" "cvr-dbg-throw test exception|VR feature 'debug hooks' failed|at CasualtyVR\.|at \(wrapper"
+}
+if (Want "imgui") {
+    # Mods' OnGUI windows (ImguiCapture): a test window from the probe (--cvr-dbg-imgui) in the middle of the screen.
+    $ready = Start-Game @("--cvr-dbg-imgui")
+    Check "imgui: game ready" $ready ""
+    Check "imgui: windows repaint into the capture" (Wait-For "IMGUI test: repaints into 'CasualtyVR.ImguiTexture'" 30) "IMGUI test: repaints into the capture texture"
+    C @("hand r point 15 22"); Start-Sleep 2
+    Check "imgui: laser hovers the window (diorama)" (Wait-For "IMGUI test: pointer inside the window" 5) "IMGUI test: pointer inside the window"
+    C @("trigger r pull 300"); Start-Sleep 1.5
+    C @("trigger r pull 300"); Start-Sleep 1.5
+    Check "imgui: laser clicks reach the window (diorama)" (Wait-For "IMGUI test: button clicked \(2\)" 5) "IMGUI test: button clicked (2)"
+    # The pointer messages move Unity's own mouse: that must not count as the player taking the real mouse.
+    $last = Held | Out-Null; $line = (Select-String -Path $log -Pattern "input: laser" | Select-Object -Last 1).Line
+    Check "imgui: the laser keeps the pointer" ($line -match "laser=on") ([regex]::Match($line, 'laser=\S+').Value)
+    & "$t\xrsim-shot.ps1" -Dir $d -Out (Join-Path $root "Working\lifecycle-imgui") -Quiet | Out-Null
+    Check-NoExceptions "imgui"
+
+    # First person: the window is on the HUD panel in front of you; pointing at it takes the laser off the world.
+    $ready = Start-Game @("--cvr-dbg-imgui", "--cvr-dbg-fp", "--cvr-dbg-clone")
+    Check "imgui fp: game ready" $ready ""
+    C @("hand r point 10 10"); Start-Sleep 1
+    $n = Count "input: laser"
+    $deadline = (Get-Date).AddSeconds(8)
+    while ((Get-Date) -lt $deadline -and (Count "input: laser") -le $n + 1) { Start-Sleep -Milliseconds 300 }
+    Check "imgui fp: pointing at the window uses it" (((Select-String -Path $log -Pattern "input: laser" | Select-Object -Last 1).Line) -match "modWindow=True") "modWindow=True"
+    C @("trigger r pull 300"); Start-Sleep 1.5
+    Check "imgui fp: click reaches the window" (Wait-For "IMGUI test: button clicked \(1\)" 5) "IMGUI test: button clicked (1)"
+    # Co-op-style name tag and status icon on a copy of the character (--cvr-dbg-clone): found for first person.
+    Check "imgui fp: name tag and icon found" (Wait-For "WorldText: 1 name tags, 1 status icons" 10) "WorldText: 1 name tags, 1 status icons on other characters"
+    Check-NoExceptions "imgui fp"
 }
 Stop-Game
 $results | Format-Table -AutoSize | Out-String -Width 200 | Write-Host

@@ -63,18 +63,29 @@ VR start failures now show on the game window, not only in the log.
 Verified headless by pointing `XR_RUNTIME_JSON` at a missing file for one process (`Notice: ... no OpenXR runtime is
 available ...`).
 
-## Multiplayer: Casualties Together (KrokMP) 5.0.2 — read, not yet played (2026-10-17)
+## Multiplayer: Casualties Together (KrokMP) 5.0.2 (2026-10-17)
 
-Read from the decompiled `BepInEx/plugins/Together/CasualtiesMP.dll` (grade STATIC). It has not been played with
-CasualtyVR yet. A first test is due with 1.2.1.
+Read from the decompiled `BepInEx/plugins/Together/CasualtiesMP.dll` (grade STATIC).
+
+The user's first co-op test with 1.2.1 (HEADSET) found three problems:
+
+- the co-op menus and windows were missing in VR, including the right-click window on other players;
+- name tags sat under the players in first person;
+- the alt-tab icon showed sideways in first person.
+
+1.2.2 addresses all three, generically, in [IMGUI_RECEIPT.md](IMGUI_RECEIPT.md). It is verified headless with a
+stand-in window and a cloned character, but not yet with the co-op mod itself.
 
 | Finding | Effect in VR | Grade |
 |---|---|---|
-| The co-op main menu, the player-list side menu and chat are drawn with IMGUI (`OnGUI`: `UIBullshit`, `UIMainMenu`, `Chat`) | Never in the headset (IMGUI goes only to the monitor); the laser cannot operate it. Host or join on the monitor, then press F10. Chat needs the keyboard | STATIC |
-| `UIBullshit` checks the cursor against those IMGUI rectangles using `Input.mousePosition` (our laser's virtual mouse) and sets `IS_CURSOR_OVERLAPPING`, which its `UIUtil.IsPointerOverUIElement` postfix reports as "over UI" | Pointing where the invisible co-op UI sits on the flat screen may block attacks or clicks there | INFERENCE |
+| The co-op main menu, player-list side menu, player-interaction window and chat are IMGUI (`OnGUI`: `UIBullshit`, `UIMainMenu`, `UIInGame`, `Chat`) | **1.2.2:** captured into the headset on every panel (`ImguiCapture`); the laser hovers and clicks through posted mouse messages. Typing in chat needs the keyboard | STATIC; capture LIVE (stand-in window) |
+| `UIBullshit` checks the cursor against its IMGUI rectangles using `Input.mousePosition` (our laser's virtual mouse) and sets `IS_CURSOR_OVERLAPPING`, which its `UIUtil.IsPointerOverUIElement` postfix reports as "over UI" | With the windows now visible, this is the flat game's behaviour: no world attack while pointing at a co-op window. In first person the laser's mouse is on the panel while it points at a window (`VrInput.OnModWindow`) | STATIC + INFERENCE |
+| Name tag: a TextMeshPro `CharacterNametag_<name>` from `special/ExpTalkText`, parented to the character root (the Body's parent), set every LateUpdate 3 units **below** the body centre | **1.2.2:** in first person it is drawn 1.6 blocks above the head, facing you, at 1.7–3° per line (`WorldText`) | STATIC; LIVE (cloned character) |
+| Status icons (`KrokoshaMP_CharacterStatusIcon_*`, the alt-tab one included): SpriteRenderers on the character root, sorting order 6000, scale 9 | **1.2.2:** in first person they turn to face you, at most 4° tall | STATIC; LIVE (cloned character) |
 | `PauseHandler.Update` postfix keeps `Time.timeScale` in multiplayer; `SetTimeScale` prefix blocks slow-motion while anyone moves | Pause, the VR settings menu and the dashboard do not stop the game | STATIC |
 | `PlayerCamera.HandleInput` prefix skips the game's input while the chat box has focus | Controllers do nothing while typing in chat (by design) | STATIC |
 | Spectator mode: `PlayerCamera.main.following` = another player; the end screen is hidden | The diorama follows the spectated player (it follows the game's camera). First person stays on your own body (`PlayerCamera.main.body`): switch to the diorama (F7) to spectate | STATIC + INFERENCE |
+| Remote players are clones of the local character (`ServerMain.CHARACTER_PREFAB`) | Our test does the same (`--cvr-dbg-clone`) | STATIC |
 | `FluidManager.RenderFluids`: a counting prefix (`KrokV5Optimization.EvidenceParticles`) | No conflict with our postfix | STATIC |
 | `Body.PickUpItem` and the `PlayerCamera.Try*` actions are patched to sync | First-person grabs call `Body.PickUpItem`, so they go through its sync | STATIC |
 | `Camera.main` and `Input.mousePosition` are used for world aim (`Util.cs`) | Unaffected: the eye cameras are not tagged MainCamera, and the virtual mouse is in the game camera's screen space | STATIC |

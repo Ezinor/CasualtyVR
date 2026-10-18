@@ -47,6 +47,8 @@ namespace CasualtyVR
         private readonly GameObject theatre;   // main menu: the whole UI, big and centred where the diorama sits
         private readonly Material panelMaterial;      // opaque dashboard
         private readonly Material additiveMaterial;   // HUD over the diorama, and the desktop mirror
+        private readonly Material imguiMaterial;      // captured IMGUI windows (ImguiCapture), over every panel
+        private readonly GameObject desktopImgui;     // ...and over the desktop mirror
         private readonly Dictionary<Canvas, int> converted = new Dictionary<Canvas, int>();   // canvas -> original layer
         private float nextScan;
         private bool selfTestDone;
@@ -99,13 +101,21 @@ namespace CasualtyVR
             theatre = CreateQuad("CasualtyVR.UiTheatre", short.MaxValue, panelMaterial);
             // Desktop: same additive composite, on a quad in front of the game camera that only it sees
             // (UGUI cannot draw the URP particle shader, and the opaque texture would black out the monitor).
-            desktop = CreateQuad("CasualtyVR.UiDesktop", short.MaxValue, additiveMaterial, DesktopLayer);
+            desktop = CreateQuad("CasualtyVR.UiDesktop", short.MaxValue - 1, additiveMaterial, DesktopLayer);
+            // Mods' OnGUI windows (ImguiCapture): alpha-blended over the UI, as IMGUI draws over the canvases.
+            imguiMaterial = CreateBlendMaterial(UnityEngine.Rendering.BlendMode.OneMinusSrcAlpha, "CasualtyVR.UiImgui");
+            desktopImgui = CreateQuad("CasualtyVR.UiDesktopImgui", short.MaxValue, imguiMaterial, DesktopLayer);
 
             EnsureTexture();
             SceneManager.sceneLoaded += OnSceneLoaded;
         }
 
-        private static Material CreateAdditiveMaterial()
+        private static Material CreateAdditiveMaterial() => CreateBlendMaterial(UnityEngine.Rendering.BlendMode.One, "CasualtyVR.UiAdditive");
+
+        // Source factor One: additive with DstBlend One; with OneMinusSrcAlpha it is premultiplied-alpha blending, which
+        // suits the IMGUI capture (IMGUI's own SrcAlpha/OneMinusSrcAlpha blend leaves colour times alpha in a cleared
+        // texture; partly transparent window backgrounds come out a little more see-through than on the monitor).
+        private static Material CreateBlendMaterial(UnityEngine.Rendering.BlendMode dst, string name)
         {
             var shader = Shader.Find("Universal Render Pipeline/Particles/Unlit");
             if (shader == null)
@@ -113,11 +123,11 @@ namespace CasualtyVR
                 Plugin.Log.LogWarning("UI: URP Particles/Unlit not found; HUD will be opaque");
                 return new Material(Shader.Find("Sprites/Default"));
             }
-            var m = new Material(shader) { name = "CasualtyVR.UiAdditive", renderQueue = 3000 };
+            var m = new Material(shader) { name = name, renderQueue = 3000 };
             m.SetFloat("_Surface", 1f);
-            m.SetFloat("_Blend", 2f);          // additive
+            m.SetFloat("_Blend", dst == UnityEngine.Rendering.BlendMode.One ? 2f : 1f);   // additive / premultiply
             m.SetFloat("_SrcBlend", (float)UnityEngine.Rendering.BlendMode.One);
-            m.SetFloat("_DstBlend", (float)UnityEngine.Rendering.BlendMode.One);
+            m.SetFloat("_DstBlend", (float)dst);
             m.SetFloat("_ZWrite", 0f);
             m.SetFloat("_Cull", 0f);
             m.EnableKeyword("_SURFACE_TYPE_TRANSPARENT");
@@ -171,6 +181,12 @@ namespace CasualtyVR
         {
             unitsPerMetreForCursor = VrSpace.Scale;
             EnsureTexture();
+            ImguiCapture.EnsureTexture();
+            if (ImguiCapture.Texture != null && imguiMaterial.mainTexture != ImguiCapture.Texture)
+            {
+                imguiMaterial.mainTexture = ImguiCapture.Texture;
+                if (imguiMaterial.HasProperty("_BaseMap")) imguiMaterial.SetTexture("_BaseMap", ImguiCapture.Texture);
+            }
             if (Time.unscaledTime >= nextScan)
             {
                 nextScan = Time.unscaledTime + 0.5f;
@@ -245,10 +261,15 @@ namespace CasualtyVR
         {
             var cam = Camera.main;
             desktop.SetActive(cam != null && cam.orthographic);
-            if (!desktop.activeSelf) return;
+            if (!desktop.activeSelf) { if (desktopImgui.activeSelf) desktopImgui.SetActive(false); return; }
             float h = cam.orthographicSize * 2f;
             desktop.transform.SetPositionAndRotation(cam.transform.position + cam.transform.forward * (cam.nearClipPlane + 0.05f), cam.transform.rotation);
             desktop.transform.localScale = new Vector3(h * cam.aspect, h, 1f);
+            bool imgui = ImguiCapture.Running && ImguiCapture.HasContent && ImguiCapture.Texture != null;
+            if (desktopImgui.activeSelf != imgui) desktopImgui.SetActive(imgui);
+            if (!imgui) return;
+            desktopImgui.transform.SetPositionAndRotation(cam.transform.position + cam.transform.forward * (cam.nearClipPlane + 0.04f), cam.transform.rotation);
+            desktopImgui.transform.localScale = desktop.transform.localScale;
         }
 
         private static bool MenuOpen()
@@ -368,8 +389,11 @@ namespace CasualtyVR
             {
                 if (!go.activeSelf) continue;
                 var r = go.GetComponent<MeshRenderer>();
-                overlayCmd.DrawMesh(go.GetComponent<MeshFilter>().sharedMesh, go.transform.localToWorldMatrix, r.sharedMaterial, 0, 0);
+                var mesh = go.GetComponent<MeshFilter>().sharedMesh;
+                overlayCmd.DrawMesh(mesh, go.transform.localToWorldMatrix, r.sharedMaterial, 0, 0);
                 drawn++;
+                // Mods' OnGUI windows on top of the game's UI, on whichever panel shows it.
+                if (ImguiCapture.Running && ImguiCapture.HasContent && ImguiCapture.Texture != null) { overlayCmd.DrawMesh(mesh, go.transform.localToWorldMatrix, imguiMaterial, 0, 0); drawn++; }
                 cursorPanel = go;
             }
             drawn += FirstPerson.DrawOverlay(overlayCmd, eye);
@@ -448,6 +472,23 @@ namespace CasualtyVR
             screen = Vector2.zero;
             point = Vector3.zero;
             return false;
+        }
+
+        /// <summary>First person: the laser on the HUD panel in front of you (for IMGUI windows, VrInput).</summary>
+        public bool RaycastHud(Ray ray, out Vector2 screen, out Vector3 point)
+        {
+            screen = Vector2.zero;
+            point = Vector3.zero;
+            if (hud == null || !hud.activeSelf) return false;
+            var t = hud.transform;
+            var plane = new Plane(t.forward, t.position);
+            if (!plane.Raycast(ray, out float dist) || dist <= 0f) return false;
+            point = ray.GetPoint(dist);
+            Vector3 local = t.InverseTransformPoint(point);
+            float u = local.x + 0.5f, v = local.y + 0.5f;
+            if (u < 0f || u > 1f || v < 0f || v > 1f) return false;
+            screen = new Vector2(u * rt.width, v * rt.height);
+            return true;
         }
 
         /// <summary>
@@ -547,6 +588,8 @@ namespace CasualtyVR
             Object.Destroy(dashboard);
             Object.Destroy(theatre);
             Object.Destroy(desktop);
+            Object.Destroy(desktopImgui);
+            Object.Destroy(imguiMaterial);
             Object.Destroy(uiCam.gameObject);
             if (rt != null) { rt.Release(); Object.Destroy(rt); }
             Object.Destroy(panelMaterial);
