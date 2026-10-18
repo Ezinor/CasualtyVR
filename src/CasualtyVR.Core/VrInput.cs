@@ -48,6 +48,8 @@ namespace CasualtyVR
         public static string Profile { get; private set; } = "";
         /// <summary>First person: the laser points at a mod's OnGUI window on the HUD panel.</summary>
         public static bool OnModWindow { get; private set; }
+        /// <summary>While the VR settings menu is open: either stick's up/down (it scrolls the menu; the game gets no stick).</summary>
+        public static float MenuStickY { get; private set; }
 
         private static HashSet<KeyCode> held = new HashSet<KeyCode>();
         private static HashSet<KeyCode> prevHeld = new HashSet<KeyCode>();
@@ -139,6 +141,7 @@ namespace CasualtyVR
             lastScale = unitsPerMetre;
             if (!Enabled || input.focused == 0)
             {
+                MenuStickY = 0f;
                 controlsOn.Clear();
                 LaserVisible = false;
                 LaserMode = false;
@@ -187,10 +190,15 @@ namespace CasualtyVR
             else if (suppressed.Count > 0) suppressed.IntersectWith(controlsOn);
 
             bool fp = VrSpace.FirstPerson;
-            if (fp) FirstPersonSticks(left, right);
+            // The VR settings menu is modal for the sticks: they scroll it (VRMENU_REVIEW M1b), and nobody walks off.
+            bool settings = VrSettingsMenu.IsOpen;
+            MenuStickY = !settings ? 0f : Mathf.Abs(right.stickY) >= Mathf.Abs(left.stickY) ? right.stickY : left.stickY;
+            if (fp && !settings) FirstPersonSticks(left, right);
+            else FirstPerson.TurnAxis = 0f;
             foreach (var kv in Plugin.ControlBinds)
             {
                 if (!controlsOn.Contains(kv.Key) || suppressed.Contains(kv.Key)) continue;
+                if (settings && kv.Key.IndexOf("stick", System.StringComparison.OrdinalIgnoreCase) >= 0) continue;
                 if (fp && FpStickControls.Contains(kv.Key)) continue;   // the sticks walk, climb and turn in first person
                 // First person, outside menus: the grips are hands (VrGrab), not buttons.
                 if (fp && !ui.DashboardShown && (kv.Key == "R.grip" || kv.Key == "L.grip" || kv.Key == "BothGrips")) continue;

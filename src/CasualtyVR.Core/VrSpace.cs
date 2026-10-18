@@ -63,8 +63,14 @@ namespace CasualtyVR
         public static Vector3 HeadPosition { get; private set; }
         public static Vector3 HeadForward { get; private set; } = Vector3.forward;
 
+        /// <summary>The head (centre eye) in tracking space (Unity axes, metres): where panels open in front of you.</summary>
+        public static Vector3 HeadTrackingPos { get; private set; }
+        public static Quaternion HeadTrackingRot { get; private set; } = Quaternion.identity;
+
         public static void SetHead(Vector3 trackingPos, Quaternion trackingRot)
         {
+            HeadTrackingPos = trackingPos;
+            HeadTrackingRot = trackingRot;
             HeadPosition = Point(trackingPos);
             HeadForward = Rot(trackingRot) * Vector3.forward;
         }
@@ -74,6 +80,8 @@ namespace CasualtyVR
 
         public static Vector3 Point(Vector3 tracking) => worldOrigin + Rotation * (tracking - trackOrigin) * Scale;
         public static Quaternion Rot(Quaternion tracking) => Rotation * tracking;
+        /// <summary>World point back to tracking space (the inverse of Point).</summary>
+        public static Vector3 ToTracking(Vector3 world) => trackOrigin + Quaternion.Inverse(Rotation) * (world - worldOrigin) / Scale;
 
         // OpenXR is right-handed with -Z forward; Unity is left-handed with +Z forward.
         public static Vector3 ToUnity(XrNative.Vec3 p) => new Vector3(p.x, p.y, -p.z);

@@ -68,8 +68,24 @@ namespace CasualtyVR
 
         public DioramaFrame Frame;
 
+        /// <summary>The running instance (VR on), for the settings menu's headless aim check.</summary>
+        public static VrUi Current { get; private set; }
+
+        // The VR settings menu on its own panel (VRMENU_REVIEW M1a): the dashboard shows only the menu's area of the UI
+        // texture (dashUv, normalised), filling a bigger panel, placed in front of your head when it opens (M5b).
+        private Rect dashUv = new Rect(0f, 0f, 1f, 1f);
+        private bool settingsPlaced;
+        private Vector3 settingsPos;        // tracking space
+        private Quaternion settingsRot = Quaternion.identity;
+        /// <summary>The settings menu is shown on its own panel this frame.</summary>
+        public bool SettingsPanelShown { get; private set; }
+
+        /// <summary>Place the settings panel in front of the head again on the next frame (menu opened, recentred).</summary>
+        public void PlaceSettingsAgain() => settingsPlaced = false;
+
         public VrUi()
         {
+            Current = this;
             var camGo = new GameObject("CasualtyVR.UiCamera") { hideFlags = HideFlags.DontSave };
             Object.DontDestroyOnLoad(camGo);
             uiCam = camGo.AddComponent<Camera>();
@@ -202,9 +218,18 @@ namespace CasualtyVR
             // ...and the world-generation loading screen, which otherwise went to the additive HUD and showed
             // the level through it (user report).
             bool menuScene = PlayerCamera.main == null || EndScreenShown() || WorldGenerating();
+            // The settings menu is modal: on its own panel, also over the main menu (instead of the theatre).
+            Rect menuRect = VrSettingsMenu.IsOpen ? VrSettingsMenu.Instance.ScreenRect() : Rect.zero;
+            bool settingsPanel = menuRect.width > 1f && menuRect.height > 1f;
+            if (!settingsPanel) settingsPlaced = false;
+            SettingsPanelShown = settingsPanel;
+            SetDashboardUv(settingsPanel
+                ? Rect.MinMaxRect(Mathf.Clamp01(menuRect.xMin / rt.width), Mathf.Clamp01(menuRect.yMin / rt.height), Mathf.Clamp01(menuRect.xMax / rt.width), Mathf.Clamp01(menuRect.yMax / rt.height))
+                : new Rect(0f, 0f, 1f, 1f));
+            if (settingsPanel) menuScene = false;
             theatre.SetActive(menuScene);
             bool wasShown = DashboardShown;
-            DashboardShown = !menuScene && (ForceDashboard || MenuOpen());
+            DashboardShown = !menuScene && (ForceDashboard || settingsPanel || MenuOpen());
             if (DashboardShown != wasShown || menuScene != lastMenuScene)
                 Plugin.Log.LogInfo($"UI mode: {(menuScene ? "theatre (main menu / loading / end screen)" : DashboardShown ? "dashboard" : "HUD")}");
             lastMenuScene = menuScene;
@@ -235,7 +260,23 @@ namespace CasualtyVR
                 hud.transform.SetPositionAndRotation(new Vector3(focus.x, focus.y, 0f), Quaternion.identity);
                 hud.transform.localScale = new Vector3(halfH * 2f * logic.aspect, halfH * 2f, 1f);
             }
-            if (dashboard.activeSelf)
+            if (dashboard.activeSelf && settingsPanel)
+            {
+                if (!settingsPlaced)
+                {
+                    // In front of where you look (yaw only), at a comfortable height, tilted to face the eyes (M5b).
+                    settingsPlaced = true;
+                    Quaternion yaw = VrSpace.YawOf(VrSpace.HeadTrackingRot);
+                    var local = new Vector3(0f, Plugin.SettingsHeight.Value, Plugin.SettingsDistance.Value);
+                    settingsPos = VrSpace.HeadTrackingPos + yaw * local;
+                    settingsRot = yaw * Quaternion.LookRotation(local.normalized, Vector3.up);
+                }
+                dashboard.transform.SetPositionAndRotation(VrSpace.Point(settingsPos), VrSpace.Rot(settingsRot));
+                float wMetres = Plugin.SettingsWidth.Value;
+                float aspect = (dashUv.height * rt.height) / Mathf.Max(1f, dashUv.width * rt.width);
+                dashboard.transform.localScale = new Vector3(wMetres, wMetres * aspect, 1f) * VrSpace.Scale;
+            }
+            else if (dashboard.activeSelf)
             {
                 // Seated-space pose: below and in front of the head, tilted to face it. First person, minigame: close
                 // and low, within reach, so the hand touches it (FP-4).
@@ -270,6 +311,39 @@ namespace CasualtyVR
             if (!imgui) return;
             desktopImgui.transform.SetPositionAndRotation(cam.transform.position + cam.transform.forward * (cam.nearClipPlane + 0.04f), cam.transform.rotation);
             desktopImgui.transform.localScale = desktop.transform.localScale;
+        }
+
+        private void SetDashboardUv(Rect uv)
+        {
+            if (uv == dashUv) return;
+            dashUv = uv;
+            var mesh = dashboard.GetComponent<MeshFilter>().sharedMesh;
+            mesh.uv = new[] { new Vector2(uv.xMin, uv.yMin), new Vector2(uv.xMax, uv.yMin), new Vector2(uv.xMax, uv.yMax), new Vector2(uv.xMin, uv.yMax) };
+        }
+
+        /// <summary>A UI-texture pixel to the panel's local coordinates (-0.5..0.5), through the dashboard's crop.</summary>
+        private Vector2 PanelLocal(GameObject panel, Vector2 pixel)
+        {
+            Vector2 n = new Vector2(pixel.x / rt.width, pixel.y / rt.height);
+            if (panel == dashboard) n = new Vector2((n.x - dashUv.x) / dashUv.width, (n.y - dashUv.y) / dashUv.height);
+            return n - new Vector2(0.5f, 0.5f);
+        }
+
+        /// <summary>Panel coordinates (0..1) to a UI-texture pixel, through the dashboard's crop.</summary>
+        private Vector2 PanelPixel(GameObject panel, float u, float v)
+        {
+            if (panel == dashboard) { u = dashUv.x + u * dashUv.width; v = dashUv.y + v * dashUv.height; }
+            return new Vector2(u * rt.width, v * rt.height);
+        }
+
+        /// <summary>Where a UI-texture pixel is in the world on the settings panel (headless aim check), or false.</summary>
+        public bool SettingsPixelToWorld(Vector2 pixel, out Vector3 world)
+        {
+            world = Vector3.zero;
+            if (!SettingsPanelShown || !dashboard.activeSelf) return false;
+            Vector2 l = PanelLocal(dashboard, pixel);
+            world = dashboard.transform.TransformPoint(new Vector3(l.x, l.y, 0f));
+            return true;
         }
 
         private static bool MenuOpen()
@@ -466,7 +540,7 @@ namespace CasualtyVR
                 Vector3 local = t.InverseTransformPoint(point);
                 float u = local.x + 0.5f, v = local.y + 0.5f;
                 if (u < 0f || u > 1f || v < 0f || v > 1f) continue;
-                screen = new Vector2(u * rt.width, v * rt.height);
+                screen = PanelPixel(panel, u, v);
                 return true;
             }
             screen = Vector2.zero;
@@ -506,7 +580,7 @@ namespace CasualtyVR
             if (u < -0.05f || u > 1.05f || v < -0.05f || v > 1.05f || local.z < -0.10f || local.z > 0.15f) return false;
             u = Mathf.Clamp01(u);
             v = Mathf.Clamp01(v);
-            screen = new Vector2(u * rt.width, v * rt.height);
+            screen = PanelPixel(dashboard, u, v);
             onPanel = t.TransformPoint(new Vector3(u - 0.5f, v - 0.5f, 0f));
             return true;
         }
@@ -534,8 +608,8 @@ namespace CasualtyVR
 
         private Matrix4x4 CursorMatrix(GameObject panel, float sizeMetres)
         {
-            Vector3 mouse = Input.mousePosition;
-            var local = new Vector3(Mathf.Clamp01(mouse.x / rt.width) - 0.5f, Mathf.Clamp01(mouse.y / rt.height) - 0.5f, 0f);
+            Vector2 l = PanelLocal(panel, Input.mousePosition);
+            var local = new Vector3(Mathf.Clamp(l.x, -0.5f, 0.5f), Mathf.Clamp(l.y, -0.5f, 0.5f), 0f);
             var t = panel.transform;
             Vector3 pos = t.TransformPoint(local) - t.forward * (0.002f * unitsPerMetreForCursor);   // a hair in front of the panel
             float size = sizeMetres * unitsPerMetreForCursor;
@@ -568,6 +642,7 @@ namespace CasualtyVR
 
         public void Destroy()
         {
+            if (Current == this) Current = null;
             overlayCmd.Release();
             Object.Destroy(cursorMesh);
             Object.Destroy(beamMesh);

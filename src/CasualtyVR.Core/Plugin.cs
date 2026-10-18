@@ -11,12 +11,14 @@ namespace CasualtyVR
     /// <summary>
     /// CasualtyVR entry point. F10 starts/stops VR (VR.StartVrOnLaunch starts it with the game; --cvr-vr forces it). F9 recenters.
     /// </summary>
-    [BepInPlugin(Guid, "CasualtyVR", Version)]
+    [BepInPlugin(Guid, "CasualtyVR", NumericVersion)]
     [BepInProcess("CasualtiesUnknown.exe")]
     public class Plugin : BaseUnityPlugin
     {
         public const string Guid = "casualtyvr.core";
-        public const string Version = "1.2.2";
+        public const string Version = "1.3.0-test1";
+        /// <summary>BepInEx needs a plain version number (test builds carry a suffix in Version).</summary>
+        public const string NumericVersion = "1.3.0";
         /// <summary>The game version this release was tested with (Application.version).</summary>
         public const string TestedGameVersion = "7.0.1";
         /// <summary>Another game version: logged at start, and noticed on the monitor when VR starts (FAIL-PACK-015).</summary>
@@ -38,6 +40,9 @@ namespace CasualtyVR
         internal static ConfigEntry<float> DashboardHeight;
         internal static ConfigEntry<float> DashboardWidth;
         internal static ConfigEntry<float> MenuWidth;
+        internal static ConfigEntry<float> SettingsDistance;
+        internal static ConfigEntry<float> SettingsHeight;
+        internal static ConfigEntry<float> SettingsWidth;
         internal static ConfigEntry<float> CursorSize;
         internal static ConfigEntry<string> LaserHand;
         internal static ConfigEntry<bool> ShowLaser;
@@ -135,6 +140,11 @@ namespace CasualtyVR
             CursorSize = Config.Bind("Dashboard", "CursorSizeMetres", 0.025f, "Size of the mouse cursor drawn on the VR panels.");
             MenuWidth = Config.Bind("Dashboard", "MainMenuWidthMetres", 1.3f, "Width of the main-menu panel, shown at the diorama's position and distance.");
             DashboardWidth = Config.Bind("Dashboard", "WidthMetres", 1.0f, "Dashboard width; height follows the game window's aspect.");
+            // The VR settings menu on its own panel (docs/VRMENU_REVIEW.md M1a, M5b): it opens in front of you, sized so
+            // every control is at least 2.5 degrees across and the text about 16 dp.
+            SettingsDistance = Config.Bind("Dashboard", "SettingsDistanceMetres", 0.8f, "Distance of the VR settings panel from your head when it opens.");
+            SettingsHeight = Config.Bind("Dashboard", "SettingsHeightMetres", -0.12f, "Height of the VR settings panel's centre relative to your eyes when it opens (negative = below).");
+            SettingsWidth = Config.Bind("Dashboard", "SettingsWidthMetres", 0.95f, "Width of the VR settings panel.");
             DioramaDistance = Config.Bind("Diorama", "DistanceMetres", 1.2f, "Distance from the seated head origin to the game plane.");
             PopupScale = Config.Bind("Diorama", "PopupScale", 1f, "Multiplier on the pop-up-book layer depths (0 = flat card).");
             VoxelsOn = Config.Bind("Voxels", "Enabled", true, "Show the terrain as 3D blocks in the headset (the flat game on the monitor is unchanged).");

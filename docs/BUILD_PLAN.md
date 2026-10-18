@@ -54,6 +54,9 @@ Phase 2; the idle sway, the run bob and a moderate judder were measured for FP 8
 
 ### Phase 1 — VR menu framework (M)
 
+**Built 2026-10-18, test build `1.3.0-test1`:** see [PHASE1_RECEIPT.md](PHASE1_RECEIPT.md). Headless checks pass; the
+headset gate (readability, V7) is open.
+
 | Work | From |
 |---|---|
 | The menu on its own enlarged panel, filling it | M1a (V2) |

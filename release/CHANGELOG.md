@@ -1,5 +1,27 @@
 # Changelog
 
+## 1.3.0-test1 — 2026-10-18 (test build)
+
+**A new VR settings menu** (F12, or the pause menu's *VR* button)
+
+- **Its own big panel:** the menu now opens on a panel of its own, in front of where you are looking, about a metre
+  wide and 0.8 m away. Everything on it is bigger: every button is at least 2.5° across, the text about twice its
+  old size. *Recenter* moves the panel in front of you again.
+- **Pages by task:** Comfort, View, First person, Hands & body, Controls, Menus & HUD, Passthrough and About (the
+  keys, the versions and where the logs are). The *Blocks* page is now part of *View*.
+- **Controls that suit a pointer:** on/off settings are switches (click anywhere on the row); short lists are
+  buttons side by side; amounts are **sliders** you drag with the trigger held, with fine < > at the ends and the
+  value in real units (m, cm, %, °/s).
+- **Point at a setting to see what it does:** its description shows under the list.
+- **More settings:** each page shows the common settings; *More settings* at the bottom shows the fine tuning
+  (thicknesses, depths, panel placement, minigame hand offsets, key-colour channels).
+- **Reset one setting:** a row that differs from its default has a reset button (↺); *Reset page* still resets
+  the whole page (press twice).
+- **Feedback:** the controller ticks lightly when you point at a control and more firmly when you click; clicks
+  make the game's own click sound.
+- **Long pages scroll** with either stick (the sticks do nothing else while the menu is open, so you do not walk
+  off in first person), the arrows on the right, or the mouse wheel.
+
 ## 1.2.2 — 2026-10-17 (test build)
 
 **Other mods' windows in VR** (user report with the Casualties Together co-op mod)

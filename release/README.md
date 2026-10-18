@@ -1,4 +1,4 @@
-# CasualtyVR 1.2.2
+# CasualtyVR 1.3.0-test1
 
 A VR mod for **Casualties: Unknown** (Demo, game version 7.0.1). It shows the game as a 3D diorama in front of
 you: the terrain becomes solid blocks, liquids fill their tunnels, and characters and objects get real depth.
@@ -65,29 +65,36 @@ Keyboard: **F10** start/stop VR, **F9** recenter, **Page Up / Page Down** zoom, 
 
 ## VR settings
 
-Open the pause menu and press the cyan **VR** button, or press **F12**. Every row is `<  value  >` and changes
-are saved immediately. Rows that can be switched off show *Off*: press `<` at the lowest value to switch them
-off, and `>` to switch them back on. **Recenter** and **Reset page** (press twice) are at the top.
+Open the pause menu and press the cyan **VR** button, or press **F12**. The menu opens on its own panel in front of
+you. Point with the laser and click with the trigger: on/off rows are switches (click anywhere on the row), short
+lists are buttons side by side, and amounts are sliders (hold the trigger and drag, or use the fine `<` `>` at the
+ends). Point at a row to read what it does, under the list. Changes are saved immediately. A row that differs from
+its default has a reset button; **Reset page** (press twice) resets the whole page. **More settings** at the bottom
+shows the fine tuning. Long pages scroll with either stick, the arrows on the right or the mouse wheel.
 
-- **View:** zoom, diorama distance, window size and edge fade, HUD size, hover highlight, fog style on foggy layers
-  (Mist / Haze / Off) and fog strength, menu panel position and size, cursor style (Hand / Cursor / Off) and
-  size, controller hands and their size.
-- **Blocks:** 3D blocks, block front and back depth, pop-up depth, object depth, character thickness, liquid depth
-  (and its surface opacity).
-- **1st person** and **Hands:** see *First-person mode*.
-- **Controls:** any controller input to any game action (named as in the game's own key-bind settings), and the
-  minigame hand offset (shift the game's hand image relative to where clicks land, if it does not line up with
-  how you aim; 0 / 0 is the game's own placement).
+- **Comfort:** turning (snap or smooth, and its speed), running speed, fall vignette, what happens when you are
+  knocked down, blackout when unconscious; camera smoothing under *More settings*.
+- **View:** zoom, diorama distance, window size, 3D blocks, fog style on foggy layers (Mist / Haze / Off) and fog
+  strength, hover highlight, rain; under *More settings* the window edge fade, block depths, pop-up depth, object
+  depth, character thickness and liquid depth.
+- **First person** and **Hands & body:** see *First-person mode*. Controller hands (in the diorama) and vibration
+  are under *Hands & body*.
+- **Controls:** any controller input to any game action (named as in the game's own key-bind settings); under
+  *More settings* the laser hand, the beam, and the minigame hand offset (shift the game's hand image relative to
+  where clicks land, if it does not line up with how you aim; 0 / 0 is the game's own placement).
+- **Menus & HUD:** HUD size, cursor style (Hand / Arrow / Off) and size; under *More settings* the placement of
+  this panel, of the menu panel (dashboard) and of the main menu.
 - **Passthrough:** greenscreen. It paints everything outside the game window, and the game's background, in a
-  key colour (green, blue, magenta, black, white, or custom RGB), for chroma-key passthrough such as Virtual
-  Desktop's.
+  key colour (green, blue, magenta, black, white, or custom RGB under *More settings*), for chroma-key passthrough
+  such as Virtual Desktop's.
+- **About:** the version, the keys and where the logs are.
 
 All settings are also in `BepInEx\config\casualtyvr.core.cfg`, with a few extra ones (for example
 `ThicknessLayers` under `[Voxels]`).
 
 ## First-person mode (experimental)
 
-Press **F7**, or open VR settings > *1st person*, to play from the character's eyes. You stand inside the 3D blocks,
+Press **F7**, or open VR settings > *First person*, to play from the character's eyes. You stand inside the 3D blocks,
 looking along the tunnels. Menus, loading screens and the death screen still use the normal view. Press **F9**
 (or *Recenter*) to put your head at the character's head.
 
@@ -125,20 +132,23 @@ finger) is exactly where it acts.
 
 **Settings**
 
-- *1st person* tab:
-  - Tunnel sides: cave walls, or a void that darkens with distance (none, 30%, 60% or 100%).
-  - Characters and objects facing you.
-  - *Highlight under your hand*: *Off* (the default), *Blocks only* (the game's striped marker on the block you
-    aim at, for mining and building), or *Items and blocks* (also the game's outline on items and objects).
-  - *Turning*: *Snap* (flick to turn around) or *Smooth* at 45 to 360 degrees a second.
-  - *Movement speed*: how fast your character runs in first person (80% of the game's speed by default; the flat
+- *Comfort* tab:
+  - *Turning*: *Snap* (flick to turn around) or *Smooth*, at 30 to 360 degrees a second.
+  - *Running speed*: how fast your character runs in first person (80% of the game's speed by default; the flat
     game and the diorama always use the game's own speed).
-  - *When knocked down*: stay in first person, or switch to the diorama.
-  - Fall vignette, blackout when unconscious, camera smoothing, tunnel width, view distance, world scale.
-- *Hands* tab:
+  - Fall vignette, *When knocked down* (stay in first person, or switch to the diorama), blackout when
+    unconscious; camera smoothing under *More settings*.
+- *First person* tab:
+  - Tunnel sides: cave walls, or a void that darkens with distance.
+  - Characters and objects facing you.
+  - *Highlight under your hand*: *Off* (the default), *Blocks* (the game's striped marker on the block you aim at,
+    for mining and building), or *All* (also the game's outline on items and objects).
+  - View distance; tunnel width and world scale under *More settings*.
+- *Hands & body* tab:
   - *Character looks where you look*, and *Aim with* hand or head.
-  - Your arms and your body (each Off or a thickness), and how far behind your eyes the body sits.
-  - Grab mode (hold the grip, or toggle), swing to attack, touch minigames, vibration (Off or a strength).
+  - Grab mode (hold the grip, or toggle), swing to attack, touch minigames, vibration (on/off and strength).
+  - Under *More settings*: your arms and your body (each on/off and a thickness), and how far behind your eyes the
+    body sits.
 
 The both-grips ragdoll control is off in first person, because the grips are your hands; bind ragdoll to another
 control in *Controls* if you want it.

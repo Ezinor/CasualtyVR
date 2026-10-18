@@ -44,6 +44,8 @@ namespace CasualtyVR
         public static void RequestTurn() => turnRequested = true;
         /// <summary>Smooth turning (FirstPerson.Turning = Smooth): right stick x, set by VrInput each frame.</summary>
         public static float TurnAxis;
+        /// <summary>The first-person scale in use (blocks per metre), or 0 outside first person (the menu's "World scale").</summary>
+        public static float CurrentScale => instance != null && Active ? instance.Scale : 0f;
 
         private bool facingRight = true;
         private float yaw = 90f;   // tracking -> world yaw: 90 = the player's forward is world +x

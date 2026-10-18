@@ -21,6 +21,8 @@ Machine-specific notes, if any, are in `CLAUDE.local.md` (not in git).
   `--cvr-dbg-modifier <i>` (docs/LAYER_MODIFIERS.md).
 - Headset feedback rounds: docs/FP7_RECEIPT.md (`--cvr-dbg-talk` speech + damage number, `--cvr-dbg-settings <tab> --cvr-dbg-reset`).
 - **Build order: docs/BUILD_PLAN.md** (phases 0–8; merges IMPROVEMENT_PLAN, FIRSTPERSON_REVIEW, VRMENU_REVIEW).
+  - Phase 1, the VR settings menu on its own panel: docs/PHASE1_RECEIPT.md, test `tools/vr-menu.ps1` (flags `--cvr-dbg-settings <tab|all>`,
+    `--cvr-dbg-settings-more`, `--cvr-dbg-menu-aim` logs xr-sim `hand r point` angles for a few controls).
 - Review plan: docs/IMPROVEMENT_PLAN.md (groups A–E). Group A (input/session lifecycle, recenter heading, fault isolation,
   bridge log `BepInEx/CasualtyVR-bridge.log`): docs/LIFECYCLE_RECEIPT.md, test `tools/vr-lifecycle.ps1` (xr-sim session states,
   focus, validity; flags `--cvr-dbg-recenter <s>`, `--cvr-dbg-throw <s>`). Read the Unity player log in tests, not LogOutput.log (buffered).
