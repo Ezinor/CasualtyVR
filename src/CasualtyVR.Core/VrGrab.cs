@@ -51,7 +51,9 @@ namespace CasualtyVR
                     st.Grip = false;
                     continue;
                 }
-                Track(st, roomPos);
+                // A held pose (short tracking dropout) is frozen: motion read across it would be a throw or swing.
+                if (VrInput.HandPoseHeld(h)) st.Count = 0;
+                else Track(st, roomPos);
                 bool gripNow = grip >= (st.Grip ? 0.4f : 0.6f);
                 bool pressed = gripNow && !st.Grip, released = !gripNow && st.Grip;
                 st.Grip = gripNow;

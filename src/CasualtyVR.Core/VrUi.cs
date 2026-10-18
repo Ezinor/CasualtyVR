@@ -208,7 +208,7 @@ namespace CasualtyVR
             {
                 // First person: the HUD is a see-through panel in front of you (tracking space), facing you.
                 float w = Plugin.MenuWidth.Value;
-                hud.transform.SetPositionAndRotation(VrSpace.Point(seatedOrigin + new Vector3(0f, -0.05f, Plugin.DioramaDistance.Value)), VrSpace.Rot(Quaternion.identity));
+                hud.transform.SetPositionAndRotation(VrSpace.Point(VrSpace.Seated(seatedOrigin, new Vector3(0f, -0.05f, Plugin.DioramaDistance.Value))), VrSpace.Rot(VrSpace.SeatedRot(Quaternion.identity)));
                 hud.transform.localScale = new Vector3(w, w * rt.height / rt.width, 1f) * VrSpace.Scale;
             }
             else if (hud.activeSelf)
@@ -227,7 +227,7 @@ namespace CasualtyVR
                 Vector3 local = touchPanel ? new Vector3(0f, -0.32f, 0.42f) : new Vector3(0f, Plugin.DashboardHeight.Value, Plugin.DashboardDistance.Value);
                 Vector3 toward = (local - Vector3.zero).normalized;
                 Quaternion rot = Quaternion.LookRotation(toward, Vector3.up);
-                dashboard.transform.SetPositionAndRotation(VrSpace.Point(seatedOrigin + local), VrSpace.Rot(rot));
+                dashboard.transform.SetPositionAndRotation(VrSpace.Point(VrSpace.Seated(seatedOrigin, local)), VrSpace.Rot(VrSpace.SeatedRot(rot)));
                 float wMetres = touchPanel ? 0.62f : Plugin.DashboardWidth.Value;
                 dashboard.transform.localScale = new Vector3(wMetres, wMetres * rt.height / rt.width, 1f) * VrSpace.Scale;
             }

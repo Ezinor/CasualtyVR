@@ -26,9 +26,10 @@ struct CvrFrameInfo
     int64_t predictedDisplayTime;
     int64_t predictedDisplayPeriod;
     int32_t shouldRender;
-    int32_t viewsValid;      // both orientation and position valid
+    int32_t viewsValid;      // orientation valid (positions are the runtime's, or held: see positionValid)
     uint64_t frameIndex;     // our counter, increments per successful xrWaitFrame
     CvrView views[2];        // 0 = left, 1 = right
+    int32_t positionValid;   // 0: position tracking dropped; views hold the last tracked head position
 };
 
 struct CvrInfo
@@ -44,6 +45,9 @@ struct CvrInfo
     char runtimeName[128];
     char systemName[128];
     uint32_t apiMajor, apiMinor;
+    uint64_t waitsSkipped;       // frames where the previous waited frame had not been submitted yet
+    int32_t sessionLost;         // the runtime ended the session (LOSS_PENDING, EXITING, instance loss): stop VR
+    int32_t referenceSpaceChanged;   // LOCAL was recentred by the runtime since the last cvr_xr_get_info
 };
 
 // Creates instance (version negotiated newest-first), system, session on the device that owns
@@ -61,6 +65,8 @@ CVR_API void    cvr_xr_set_eye_textures(void* left, void* right);
 CVR_API void*   cvr_xr_get_submit_event();
 CVR_API void    cvr_xr_shutdown();
 CVR_API void    cvr_xr_get_log(char* buf, int32_t len);   // drains the bridge's log buffer
+// Also write warnings and errors to this file, flushed per line (survives a crash or hang). Null/empty: off.
+CVR_API void    cvr_xr_set_log_file(const wchar_t* path);
 
 // Controller state (playbook INPUT-001: physical transport only; the game mapping lives in C#).
 // Refreshed by cvr_xr_wait_frame (xrSyncActions + aim poses located at the frame's display time).
@@ -69,10 +75,11 @@ struct CvrHand
 {
     CvrQuat aimOrientation;   // aim pose (HAND-001: pointing contract), LOCAL space, OpenXR axes
     CvrVec3 aimPosition;
-    int32_t poseValid;
+    int32_t poseValid;        // tracked, or held for a short dropout (poseHeld)
     int32_t active;           // the hand's actions are bound and the controller is tracked/connected
     float trigger, squeeze, stickX, stickY;
     int32_t stickClick;
+    int32_t poseHeld;         // the pose is the last tracked one (dropout): no motion should be read from it
 };
 struct CvrInput
 {

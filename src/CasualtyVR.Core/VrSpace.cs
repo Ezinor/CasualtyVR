@@ -6,10 +6,12 @@ namespace CasualtyVR
     /// The one mapping from tracking space (OpenXR LOCAL, converted to Unity axes, metres) to the game world,
     /// shared by the eye cameras, the controllers, the laser, the hands and the UI panels, so they always agree.
     ///
-    /// * Diorama: the game plane is DioramaDistance metres in front of the seated origin, UnitsPerMetre world
-    ///   units per metre, no rotation (world +z = away from the player).
-    /// * First person (FirstPerson.cs): the seated origin is the character's eye, the player's forward is the
-    ///   character's facing along world x (yaw ±90°), FirstPerson.Scale units per metre.
+    /// * Seat: the seated origin and heading (yaw) in tracking space. The heading is the runtime's LOCAL forward
+    ///   unless the player recentred (F9) facing elsewhere; "in front of the player" means along the heading.
+    /// * Diorama: the game plane is DioramaDistance metres in front of the seat, UnitsPerMetre world units per
+    ///   metre (world +z = away from the player along the heading).
+    /// * First person (FirstPerson.cs): the seated origin is the character's eye, the player's forward (heading)
+    ///   is the character's facing along world x (yaw ±90°), FirstPerson.Scale units per metre.
     /// </summary>
     internal static class VrSpace
     {
@@ -21,12 +23,30 @@ namespace CasualtyVR
 
         private static Vector3 trackOrigin, worldOrigin;
 
+        /// <summary>The seat's heading in tracking space (yaw only).</summary>
+        public static Quaternion Heading { get; private set; } = Quaternion.identity;
+
+        public static void SetHeading(Quaternion heading) => Heading = heading;
+
+        /// <summary>A point given relative to the seat (x right, y up, z forward along the heading), in tracking space.</summary>
+        public static Vector3 Seated(Vector3 seatedOrigin, Vector3 local) => seatedOrigin + Heading * local;
+        /// <summary>A rotation given relative to the seat's heading, in tracking space.</summary>
+        public static Quaternion SeatedRot(Quaternion local) => Heading * local;
+
+        /// <summary>Yaw-only rotation of a tracking-space orientation (its forward projected onto the floor).</summary>
+        public static Quaternion YawOf(Quaternion q)
+        {
+            Vector3 f = q * Vector3.forward;
+            f.y = 0f;
+            return f.sqrMagnitude < 1e-6f ? Quaternion.identity : Quaternion.LookRotation(f.normalized, Vector3.up);
+        }
+
         public static void SetDiorama(Vector3 focus, Vector3 seatedOrigin)
         {
             FirstPerson = false;
             Scale = Plugin.UnitsPerMetre.Value;
-            Rotation = Quaternion.identity;
-            trackOrigin = seatedOrigin + new Vector3(0f, 0f, Plugin.DioramaDistance.Value);
+            Rotation = Quaternion.Inverse(Heading);
+            trackOrigin = Seated(seatedOrigin, new Vector3(0f, 0f, Plugin.DioramaDistance.Value));
             worldOrigin = focus;
         }
 
@@ -34,7 +54,7 @@ namespace CasualtyVR
         {
             FirstPerson = true;
             Scale = scale;
-            Rotation = Quaternion.Euler(0f, yawDegrees, 0f);
+            Rotation = Quaternion.Euler(0f, yawDegrees, 0f) * Quaternion.Inverse(Heading);
             trackOrigin = seatedOrigin;
             worldOrigin = eyeWorld;
         }

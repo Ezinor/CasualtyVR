@@ -11,6 +11,7 @@
 #include <cstdio>
 #include <cstring>
 #include <cstdarg>
+#include <share.h>
 
 #define XR_USE_PLATFORM_WIN32
 #define XR_USE_GRAPHICS_API_D3D11
@@ -23,6 +24,11 @@ namespace
 {
     std::mutex g_logMutex;
     std::string g_log;
+    // Optional copy of the log on disk, flushed per line, so a crash or a runtime hang keeps the lines that explain
+    // it (FAIL-TEST-039: the C# side only drains the buffer every 2 s). Routine per-second lines stay out of it.
+    FILE* g_logFile = nullptr;
+    size_t g_logFileBytes = 0;
+    const size_t LogFileLimit = 1024 * 1024;
 
     void Log(const char* fmt, ...)
     {
@@ -35,6 +41,16 @@ namespace
         g_log += line;
         g_log += '\n';
         if (g_log.size() > 64 * 1024) g_log.erase(0, g_log.size() - 32 * 1024);
+        bool routine = strstr(line, "timing/frame") != nullptr || strstr(line, "input: hand") != nullptr;
+        if (g_logFile && !routine && g_logFileBytes < LogFileLimit)
+        {
+            SYSTEMTIME t;
+            GetLocalTime(&t);
+            int n = fprintf(g_logFile, "%02d:%02d:%02d.%03d %s\n", t.wHour, t.wMinute, t.wSecond, t.wMilliseconds, line);
+            if (n > 0) g_logFileBytes += (size_t)n;
+            if (g_logFileBytes >= LogFileLimit) fputs("(log file limit reached)\n", g_logFile);
+            fflush(g_logFile);
+        }
     }
 
     // Static names for instance-creation failures: xrResultToString needs an instance (XR-008).
@@ -93,6 +109,21 @@ namespace
         ID3D11Texture2D* eyeTextures[2] = {nullptr, nullptr};
         CvrInfo info{};
         bool hpControllerExt = false;   // XR_EXT_hp_mixed_reality_controller enabled (Reverb G2 bindings)
+        // The runtime ended the session (LOSS_PENDING, EXITING, instance loss, or a frame call reporting it lost).
+        // Nothing waits or submits after this; the C# side stops VR (FAIL-XR-029).
+        bool sessionLost = false;
+        bool referenceSpaceChanged = false;   // LOCAL recentred by the runtime; consumed by cvr_xr_get_info
+        uint64_t waitsSkipped = 0;
+        // Last tracked head (centre of the eyes) and each eye's offset in its own frame: when position tracking
+        // drops, the views keep turning with the IMU around the last tracked position instead of going blank
+        // (FAIL-XR-013; the poses are absolute every frame, so nothing persists once tracking returns).
+        bool hasHead = false;
+        XrVector3f lastHead{};
+        XrVector3f eyeLocal[2]{};
+        // Last tracked aim pose per hand, held for a short dropout (FAIL-HAND-003).
+        bool hasHand[2] = {false, false};
+        XrPosef lastHand[2]{};
+        double lastHandMs[2] = {0, 0};
         bool adapterMismatch = false;   // the runtime's adapter LUID differs from the game device's
 
         // Frame handed from wait (main thread) to submit (render path).
@@ -116,14 +147,41 @@ namespace
         return (double)t.QuadPart * 1000.0 / (double)freq.QuadPart;
     }
 
+    // The same failure every frame (a lost session fails each xrWaitFrame) is logged once, then every 100th time.
+    std::mutex g_repeatMutex;
+    const char* g_repeatWhat = nullptr;
+    XrResult g_repeatResult = XR_SUCCESS;
+    uint64_t g_repeatCount = 0;
+
     bool Check(XrResult r, const char* what)
     {
         if (XR_SUCCEEDED(r)) return true;
+        uint64_t repeat;
+        {
+            std::lock_guard<std::mutex> lock(g_repeatMutex);
+            if (what == g_repeatWhat && r == g_repeatResult) repeat = ++g_repeatCount;
+            else { g_repeatWhat = what; g_repeatResult = r; g_repeatCount = repeat = 1; }
+        }
+        if (repeat > 1 && repeat % 100 != 0) return false;
         char name[XR_MAX_RESULT_STRING_SIZE] = "";
         if (g && g->instance) xrResultToString(g->instance, r, name);
-        Log("%s failed: %d %s", what, (int)r, name[0] ? name : ResultName(r));
+        if (repeat > 1) Log("%s failed: %d %s (repeated %llu times)", what, (int)r, name[0] ? name : ResultName(r), (unsigned long long)repeat);
+        else Log("%s failed: %d %s", what, (int)r, name[0] ? name : ResultName(r));
         return false;
     }
+
+    // Quaternion helpers for held poses (OpenXR axes; unit quaternions).
+    XrVector3f Rotate(const XrQuaternionf& q, const XrVector3f& v)
+    {
+        // v' = v + 2 * cross(q.xyz, cross(q.xyz, v) + w * v)
+        XrVector3f u{q.x, q.y, q.z};
+        XrVector3f c1{u.y * v.z - u.z * v.y + q.w * v.x, u.z * v.x - u.x * v.z + q.w * v.y, u.x * v.y - u.y * v.x + q.w * v.z};
+        XrVector3f c2{u.y * c1.z - u.z * c1.y, u.z * c1.x - u.x * c1.z, u.x * c1.y - u.y * c1.x};
+        return {v.x + 2.f * c2.x, v.y + 2.f * c2.y, v.z + 2.f * c2.z};
+    }
+    XrQuaternionf Conjugate(const XrQuaternionf& q) { return {-q.x, -q.y, -q.z, q.w}; }
+    XrVector3f Add(const XrVector3f& a, const XrVector3f& b) { return {a.x + b.x, a.y + b.y, a.z + b.z}; }
+    XrVector3f Sub(const XrVector3f& a, const XrVector3f& b) { return {a.x - b.x, a.y - b.y, a.z - b.z}; }
 
     CvrView ToCvr(const XrView& v)
     {
@@ -257,6 +315,18 @@ namespace
     {
         g->sessionState = state;
         Log("Session state -> %d", (int)state);
+        if (state != XR_SESSION_STATE_FOCUSED)
+        {
+            // XR-002: input is neutral outside FOCUSED, also when no frame is waited any more (STOPPING, IDLE),
+            // which is when UpdateInput stops refreshing it.
+            std::lock_guard<std::mutex> lock(g->frameMutex);
+            g->input = CvrInput{};
+        }
+        if (state == XR_SESSION_STATE_LOSS_PENDING || state == XR_SESSION_STATE_EXITING)
+        {
+            if (!g->sessionLost) Log("Session %s: the runtime ended the session", state == XR_SESSION_STATE_EXITING ? "EXITING" : "LOSS_PENDING");
+            g->sessionLost = true;
+        }
         if (state == XR_SESSION_STATE_READY && !g->sessionRunning)
         {
             XrSessionBeginInfo bi{XR_TYPE_SESSION_BEGIN_INFO};
@@ -549,13 +619,38 @@ namespace
                     }
                     hand.stickClick = GetBool(g->aStickClick[h], XR_NULL_PATH) ? 1 : 0;
                     XrSpaceLocation loc{XR_TYPE_SPACE_LOCATION};
-                    if (g->aimSpace[h] && XR_SUCCEEDED(xrLocateSpace(g->aimSpace[h], g->localSpace, displayTime, &loc)))
+                    bool located = g->aimSpace[h] && XR_SUCCEEDED(xrLocateSpace(g->aimSpace[h], g->localSpace, displayTime, &loc));
+                    bool oriValid = located && (loc.locationFlags & XR_SPACE_LOCATION_ORIENTATION_VALID_BIT);
+                    bool posValid = located && (loc.locationFlags & XR_SPACE_LOCATION_POSITION_VALID_BIT);
+                    XrPosef pose = loc.pose;
+                    double now = NowMs();
+                    if (oriValid && posValid)
                     {
-                        bool ok = (loc.locationFlags & XR_SPACE_LOCATION_ORIENTATION_VALID_BIT) && (loc.locationFlags & XR_SPACE_LOCATION_POSITION_VALID_BIT);
-                        hand.poseValid = ok ? 1 : 0;
-                        hand.aimOrientation = {loc.pose.orientation.x, loc.pose.orientation.y, loc.pose.orientation.z, loc.pose.orientation.w};
-                        hand.aimPosition = {loc.pose.position.x, loc.pose.position.y, loc.pose.position.z};
-                        if (ok) act = true;
+                        g->hasHand[h] = true;
+                        g->lastHand[h] = pose;
+                        g->lastHandMs[h] = now;
+                        hand.poseValid = 1;
+                        act = true;
+                    }
+                    else if (g->hasHand[h] && now - g->lastHandMs[h] < 500.0)
+                    {
+                        // A short dropout (occluded controller): the last tracked position, turning with the IMU if
+                        // orientation is still valid. Marked held so nothing reads motion (throws, swings) from it.
+                        if (!oriValid) pose.orientation = g->lastHand[h].orientation;
+                        pose.position = g->lastHand[h].position;
+                        hand.poseValid = 1;
+                        hand.poseHeld = 1;
+                        act = true;
+                    }
+                    static int lastTrack[2] = {-1, -1};   // 2 tracked, 1 held, 0 lost
+                    int track = hand.poseHeld ? 1 : hand.poseValid ? 2 : 0;
+                    if (track != lastTrack[h] && lastTrack[h] != -1)
+                        Log("controller %s: %s", h == 0 ? "left" : "right", track == 2 ? "tracked again" : track == 1 ? "tracking lost, holding the last pose" : "pose lost");
+                    lastTrack[h] = track;
+                    if (hand.poseValid)
+                    {
+                        hand.aimOrientation = {pose.orientation.x, pose.orientation.y, pose.orientation.z, pose.orientation.w};
+                        hand.aimPosition = {pose.position.x, pose.position.y, pose.position.z};
                     }
                     hand.active = act ? 1 : 0;
                     static float lastLogged[2] = {0, 0};
@@ -650,6 +745,10 @@ CVR_API void cvr_xr_get_info(CvrInfo* out)
     if (!g) { *out = CvrInfo{}; return; }
     g->info.sessionState = (int32_t)g->sessionState;
     g->info.sessionRunning = g->sessionRunning ? 1 : 0;
+    g->info.waitsSkipped = g->waitsSkipped;
+    g->info.sessionLost = g->sessionLost ? 1 : 0;
+    g->info.referenceSpaceChanged = g->referenceSpaceChanged ? 1 : 0;
+    g->referenceSpaceChanged = false;
     *out = g->info;
 }
 
@@ -665,11 +764,21 @@ CVR_API int32_t cvr_xr_poll()
             HandleStateChange(reinterpret_cast<XrEventDataSessionStateChanged*>(&ev)->state);
             break;
         case XR_TYPE_EVENT_DATA_INSTANCE_LOSS_PENDING:
-            Log("Instance loss pending");
+            Log("Instance loss pending: the runtime is going away");
+            g->sessionLost = true;
             break;
         case XR_TYPE_EVENT_DATA_REFERENCE_SPACE_CHANGE_PENDING:
-            Log("Reference space change pending (recenter)");
+        {
+            auto* rc = reinterpret_cast<XrEventDataReferenceSpaceChangePending*>(&ev);
+            Log("Reference space change pending (runtime recenter), space type %d", (int)rc->referenceSpaceType);
+            if (rc->referenceSpaceType == XR_REFERENCE_SPACE_TYPE_LOCAL)
+            {
+                g->referenceSpaceChanged = true;
+                g->hasHead = false;   // the held head position belongs to the old LOCAL
+                g->hasHand[0] = g->hasHand[1] = false;
+            }
             break;
+        }
         default:
             break;
         }
@@ -680,16 +789,23 @@ CVR_API int32_t cvr_xr_poll()
 
 CVR_API int32_t cvr_xr_wait_frame(CvrFrameInfo* out)
 {
-    if (!g || !g->sessionRunning) return 0;
+    if (!g || !g->sessionRunning || g->sessionLost) return 0;
     {
         // A frame that was waited but never submitted must not be waited over (call order).
         std::lock_guard<std::mutex> lock(g->frameMutex);
-        if (g->framePending) return 0;
+        if (g->framePending) { g->waitsSkipped++; return 0; }
     }
     XrFrameWaitInfo fwi{XR_TYPE_FRAME_WAIT_INFO};
     XrFrameState fs{XR_TYPE_FRAME_STATE};
     double t0 = NowMs();
-    if (!Check(xrWaitFrame(g->session, &fwi, &fs), "xrWaitFrame")) return 0;
+    XrResult wr = xrWaitFrame(g->session, &fwi, &fs);
+    if (wr == XR_ERROR_SESSION_LOST || wr == XR_ERROR_INSTANCE_LOST)
+    {
+        if (!g->sessionLost) Log("xrWaitFrame: %s, stopping", ResultName(wr));
+        g->sessionLost = true;
+        return 0;
+    }
+    if (!Check(wr, "xrWaitFrame")) return 0;
     double t1 = NowMs();
     g_timing.waitMs += t1 - t0;
 
@@ -702,7 +818,31 @@ CVR_API int32_t cvr_xr_wait_frame(CvrFrameInfo* out)
     uint32_t count = 0;
     bool located = Check(xrLocateViews(g->session, &vli, &vs, 2, &count, views), "xrLocateViews") && count == 2;
     g_timing.locateMs += NowMs() - t1;
-    bool valid = located && (vs.viewStateFlags & XR_VIEW_STATE_ORIENTATION_VALID_BIT) && (vs.viewStateFlags & XR_VIEW_STATE_POSITION_VALID_BIT);
+    bool oriValid = located && (vs.viewStateFlags & XR_VIEW_STATE_ORIENTATION_VALID_BIT);
+    bool posValid = located && (vs.viewStateFlags & XR_VIEW_STATE_POSITION_VALID_BIT);
+    if (oriValid && posValid)
+    {
+        g->hasHead = true;
+        g->lastHead = {(views[0].pose.position.x + views[1].pose.position.x) * 0.5f,
+                       (views[0].pose.position.y + views[1].pose.position.y) * 0.5f,
+                       (views[0].pose.position.z + views[1].pose.position.z) * 0.5f};
+        for (int eye = 0; eye < 2; eye++)
+            g->eyeLocal[eye] = Rotate(Conjugate(views[eye].pose.orientation), Sub(views[eye].pose.position, g->lastHead));
+    }
+    else if (oriValid && g->hasHead)
+    {
+        // Position dropped, orientation still tracked (IMU): turn about the last tracked head position. These are
+        // the poses both rendered and submitted (XR-005).
+        for (int eye = 0; eye < 2; eye++)
+            views[eye].pose.position = Add(g->lastHead, Rotate(views[eye].pose.orientation, g->eyeLocal[eye]));
+    }
+    bool valid = oriValid && (posValid || g->hasHead);
+    static bool lastPosValid = true;
+    if (located && posValid != lastPosValid)
+    {
+        Log("Head position tracking %s%s", posValid ? "restored" : "lost", !posValid && oriValid && g->hasHead ? " (holding the last position)" : "");
+        lastPosValid = posValid;
+    }
 
     // Outside frameMutex: UpdateInput takes it itself (calling it under the lock deadlocked the first frame).
     UpdateInput(fs.predictedDisplayTime);
@@ -720,6 +860,7 @@ CVR_API int32_t cvr_xr_wait_frame(CvrFrameInfo* out)
         out->predictedDisplayPeriod = fs.predictedDisplayPeriod;
         out->shouldRender = fs.shouldRender ? 1 : 0;
         out->viewsValid = valid ? 1 : 0;
+        out->positionValid = posValid ? 1 : 0;
         out->frameIndex = g->frameIndex;
         out->views[0] = ToCvr(views[0]);
         out->views[1] = ToCvr(views[1]);
@@ -744,7 +885,8 @@ CVR_API void cvr_xr_shutdown()
     if (!g) return;
     // Graceful exit (spec order) before destroying anything. Destroying a running session with a
     // waited-but-unsubmitted frame hung VirtualDesktopXR at application quit (WER AppHangB1, 2026-10-03).
-    if (g->session && g->sessionRunning)
+    if (g->sessionLost) Log("shutdown: the runtime ended the session; skipping the exit handshake");
+    if (g->session && g->sessionRunning && !g->sessionLost)
     {
         g->eyeTextures[0] = g->eyeTextures[1] = nullptr;
         SubmitFrame();   // closes a pending waited frame with a legal zero-layer xrEndFrame
@@ -815,4 +957,14 @@ CVR_API void cvr_xr_get_log(char* buf, int32_t len)
     std::lock_guard<std::mutex> lock(g_logMutex);
     strncpy_s(buf, len, g_log.c_str(), _TRUNCATE);
     g_log.erase(0, std::min<size_t>(g_log.size(), (size_t)len - 1));
+}
+
+CVR_API void cvr_xr_set_log_file(const wchar_t* path)
+{
+    std::lock_guard<std::mutex> lock(g_logMutex);
+    if (g_logFile) { fclose(g_logFile); g_logFile = nullptr; }
+    g_logFileBytes = 0;
+    // Appended: each VR start in one game session adds to it (the C# side keeps the previous game session's copy).
+    if (path && path[0]) g_logFile = _wfsopen(path, L"a", _SH_DENYWR);
+    if (g_logFile) { fputs("---- CasualtyVR bridge log opened\n", g_logFile); fflush(g_logFile); }
 }

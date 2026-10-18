@@ -173,7 +173,10 @@ welcome. What it needs:
 - **"Different graphics card than the headset" (laptops):** Windows runs the game on the integrated GPU. In
   Windows Settings > Display > Graphics, set `CasualtiesUnknown.exe` to *High performance*.
 - **"VR needs Direct3D 11":** remove `-force-vulkan` or `-force-d3d12` from the game's launch options.
-- **The view is too low or high, or off to one side:** look straight ahead and press F9 (or *Recenter* in the
-  settings).
+- **The view is too low or high, off to one side, or the game is not in front of you:** face the way you want
+  the game to be and press F9 (or *Recenter* in the settings). It sets both the position and the direction.
+- **"The VR session ended":** the headset disconnected or its PC app (Virtual Desktop, SteamVR...) closed. Start
+  it again, then press F10.
 - **Diagnostics for a bug report:** set `VerboseLog = true` under `[Debug]` in the config, reproduce the problem,
-  and send `BepInEx\LogOutput.log`.
+  and send `BepInEx\LogOutput.log` and `BepInEx\CasualtyVR-bridge.log` (`CasualtyVR-bridge.prev.log` is the
+  previous game session's).

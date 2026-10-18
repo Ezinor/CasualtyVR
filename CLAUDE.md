@@ -20,6 +20,9 @@ Machine-specific notes, if any, are in `CLAUDE.local.md` (not in git).
   (Unity 2022.3.62f3, URP 14.0.12) into a bundle that is committed and deployed (docs/SHADERS.md). Layer modifiers:
   `--cvr-dbg-modifier <i>` (docs/LAYER_MODIFIERS.md).
 - Headset feedback rounds: docs/FP7_RECEIPT.md (`--cvr-dbg-talk` speech + damage number, `--cvr-dbg-settings <tab> --cvr-dbg-reset`).
+- Review plan: docs/IMPROVEMENT_PLAN.md (groups A–E). Group A (input/session lifecycle, recenter heading, fault isolation,
+  bridge log `BepInEx/CasualtyVR-bridge.log`): docs/LIFECYCLE_RECEIPT.md, test `tools/vr-lifecycle.ps1` (xr-sim session states,
+  focus, validity; flags `--cvr-dbg-recenter <s>`, `--cvr-dbg-throw <s>`). Read the Unity player log in tests, not LogOutput.log (buffered).
 - Release 1.2.0: docs/RELEASE_1.2.md; headsets/Proton: docs/COMPATIBILITY.md. Flags: `--cvr-dbg-lockpick` (with `--cvr-dbg-spawn dropcapsule`),
   `--cvr-dbg-fpoff <s>` (speed restore), `--cvr-dbg-settings all` (cycles tabs), `--cvr-dbg-dumphands` (logs full-rect tool tips: use those, not the trimmed PNGs).
   Smoke test: `tools/fp-smoke.ps1` (xr-sim head/hand scripts; flags `--cvr-dbg-fp`, `--cvr-dbg-cave`, `--cvr-dbg-spawn a,b`, `--cvr-dbg-hold`).

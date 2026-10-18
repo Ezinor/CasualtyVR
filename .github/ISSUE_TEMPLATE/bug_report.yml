@@ -8,7 +8,7 @@ body:
         Thanks for reporting. A log makes most problems quick to find:
         1. In `BepInEx\config\casualtyvr.core.cfg`, set `VerboseLog = true` under `[Debug]`.
         2. Reproduce the problem, then quit the game.
-        3. Attach `BepInEx\LogOutput.log` below (drag the file into the box).
+        3. Attach `BepInEx\LogOutput.log` and `BepInEx\CasualtyVR-bridge.log` below (drag the files into the box).
   - type: textarea
     id: what
     attributes:
@@ -58,4 +58,4 @@ body:
     id: log
     attributes:
       label: Log
-      description: Drag `BepInEx\LogOutput.log` here (with `VerboseLog = true`).
+      description: Drag `BepInEx\LogOutput.log` and `BepInEx\CasualtyVR-bridge.log` here (with `VerboseLog = true`).

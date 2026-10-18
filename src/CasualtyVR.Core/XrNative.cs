@@ -32,6 +32,7 @@ namespace CasualtyVR
             public ulong frameIndex;
             public View left;
             public View right;
+            public int positionValid;   // 0: head position tracking dropped; the views hold the last tracked position
         }
 
         [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Ansi)]
@@ -48,6 +49,9 @@ namespace CasualtyVR
             [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 128)] public string runtimeName;
             [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 128)] public string systemName;
             public uint apiMajor, apiMinor;
+            public ulong waitsSkipped;          // frames that skipped xrWaitFrame (previous frame not submitted yet)
+            public int sessionLost;             // the runtime ended the session: stop VR
+            public int referenceSpaceChanged;   // the runtime recentred LOCAL (consumed by this read)
         }
 
         [StructLayout(LayoutKind.Sequential)]
@@ -59,6 +63,7 @@ namespace CasualtyVR
             public int active;
             public float trigger, squeeze, stickX, stickY;
             public int stickClick;
+            public int poseHeld;   // last tracked pose held through a short dropout: read no motion from it
         }
 
         [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Ansi)]
@@ -81,6 +86,7 @@ namespace CasualtyVR
         [DllImport(Dll)] public static extern IntPtr cvr_xr_get_submit_event();
         [DllImport(Dll)] public static extern void cvr_xr_shutdown();
         [DllImport(Dll)] public static extern void cvr_xr_get_log(StringBuilder buf, int len);
+        [DllImport(Dll, CharSet = CharSet.Unicode)] public static extern void cvr_xr_set_log_file(string path);
 
         [DllImport("kernel32", CharSet = CharSet.Unicode, SetLastError = true)]
         private static extern IntPtr LoadLibrary(string path);

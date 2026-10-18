@@ -12,10 +12,17 @@ namespace CasualtyVR
     /// CasualtyVR entry point. F10 starts/stops VR (VR.StartVrOnLaunch starts it with the game; --cvr-vr forces it). F9 recenters.
     /// </summary>
     [BepInPlugin(Guid, "CasualtyVR", Version)]
+    [BepInProcess("CasualtiesUnknown.exe")]
     public class Plugin : BaseUnityPlugin
     {
         public const string Guid = "casualtyvr.core";
         public const string Version = "1.2.0";
+        /// <summary>The game version this release was tested with (Application.version).</summary>
+        public const string TestedGameVersion = "7.0.1";
+        /// <summary>Another game version: logged at start, and noticed on the monitor when VR starts (FAIL-PACK-015).</summary>
+        internal static bool UntestedGameVersion;
+        /// <summary>The native bridge's own log, flushed per line (VrRig.StartVr); the previous run's is kept as .prev.</summary>
+        internal static string BridgeLogPath;
 
         internal static ManualLogSource Log;
         internal static string NativeDir;
@@ -223,6 +230,16 @@ namespace CasualtyVR
             host.AddComponent<VrSettingsMenu>();
 
             Log.LogInfo($"CasualtyVR {Version}");
+            UntestedGameVersion = Application.version != TestedGameVersion;
+            if (UntestedGameVersion)
+                Log.LogWarning($"Game version {Application.version}: CasualtyVR {Version} was tested with {TestedGameVersion} only; report problems with this version number");
+            BridgeLogPath = Path.Combine(Paths.BepInExRootPath, "CasualtyVR-bridge.log");
+            try
+            {
+                string prev = Path.Combine(Paths.BepInExRootPath, "CasualtyVR-bridge.prev.log");
+                if (File.Exists(BridgeLogPath)) { if (File.Exists(prev)) File.Delete(prev); File.Move(BridgeLogPath, prev); }
+            }
+            catch (Exception e) { Log.LogWarning("Could not keep the previous bridge log: " + e.Message); }
             if (StartInVr.Value || Environment.GetCommandLineArgs().Contains("--cvr-vr"))
                 rig.StartVr();
         }

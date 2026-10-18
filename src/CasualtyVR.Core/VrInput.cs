@@ -50,6 +50,8 @@ namespace CasualtyVR
         private static HashSet<KeyCode> held = new HashSet<KeyCode>();
         private static HashSet<KeyCode> prevHeld = new HashSet<KeyCode>();
         private static readonly HashSet<string> controlsOn = new HashSet<string>();
+        private static readonly HashSet<string> suppressed = new HashSet<string>();   // held at focus regain
+        private static bool wasFocused;
         private static Vector3 lastRealMouse;
         private static Vector3 lastAimDir;
         private static float lastControllerActivity = -100f, lastMouseActivity = -100f;
@@ -84,6 +86,17 @@ namespace CasualtyVR
             return Enabled && lastInput.focused != 0 && hand.poseValid != 0;
         }
 
+        /// <summary>VR (re)started: the first focused frame counts as regaining focus (held controls wait for a release).</summary>
+        public static void ResetFocus()
+        {
+            wasFocused = false;
+            suppressed.Clear();
+            controlsOn.Clear();
+        }
+
+        /// <summary>Hand h's pose is the last tracked one, held through a short dropout (no motion in it).</summary>
+        public static bool HandPoseHeld(int h) => (h == 0 ? lastInput.left : lastInput.right).poseHeld != 0;
+
         /// <summary>Hold a game action's key for this frame (first person grabs, swings).</summary>
         public static void Press(string action)
         {
@@ -108,10 +121,13 @@ namespace CasualtyVR
         public static bool Up(KeyCode k) => Enabled && !held.Contains(k) && prevHeld.Contains(k);
 
         /// <summary>
-        /// Once per frame, after the frame's poses are known and the UI panels are placed.
+        /// Exactly once per game frame while VR runs, rendered or not (playbook FAIL-INPUT-025: input must not
+        /// depend on rendering, or keys held when the headset stops rendering stay held, and a key edge repeats
+        /// on a frame that skipped this call). posesFresh: this frame's poses are known and the UI panels placed,
+        /// so the laser can be updated; otherwise it keeps last frame's pointer.
         /// The game consumes the result in the next frame's Update (one frame of input latency).
         /// </summary>
-        public static void Update(XrNative.Input input, VrUi ui, Vector3 focus, Vector3 seatedOrigin, float unitsPerMetre)
+        public static void Update(XrNative.Input input, VrUi ui, Vector3 focus, Vector3 seatedOrigin, float unitsPerMetre, bool posesFresh = true)
         {
             prevHeld = held;
             held = new HashSet<KeyCode>();
@@ -124,9 +140,12 @@ namespace CasualtyVR
                 controlsOn.Clear();
                 LaserVisible = false;
                 LaserMode = false;
+                wasFocused = false;
                 return;
             }
             Profile = input.profile ?? "";
+            bool regained = !wasFocused;
+            wasFocused = true;
 
             var left = input.left;
             var right = input.right;
@@ -147,15 +166,29 @@ namespace CasualtyVR
             Set("X", (input.buttons & 4) != 0);
             Set("Y", (input.buttons & 8) != 0);
             Set("Menu", (input.buttons & 16) != 0);
+            // First-person stick directions (used by FirstPersonSticks), sampled here so focus regain sees them.
+            Sample("FP.forward", left.stickY, 0.5f, 0.35f);
+            Sample("FP.back", -left.stickY, 0.5f, 0.35f);
+            Sample("FP.climb", right.stickY, 0.6f, 0.45f);
+            Sample("FP.crouch", -right.stickY, 0.6f, 0.45f);
             // Both grips together are their own control (ragdoll); the single-grip actions pause meanwhile.
             bool both = controlsOn.Contains("R.grip") && controlsOn.Contains("L.grip");
             Set("BothGrips", both);
+            // Back in focus (or VR just started) with a control already held: it acts only after a release, so the
+            // press that went to the system menu does not reach the game (playbook ch. 09, neutralize on focus loss).
+            if (regained)
+            {
+                suppressed.Clear();
+                suppressed.UnionWith(controlsOn);
+                if (suppressed.Count > 0) Plugin.Log.LogInfo($"Input: focus regained with [{string.Join(",", suppressed)}] held; ignored until released");
+            }
+            else if (suppressed.Count > 0) suppressed.IntersectWith(controlsOn);
 
             bool fp = VrSpace.FirstPerson;
             if (fp) FirstPersonSticks(left, right);
             foreach (var kv in Plugin.ControlBinds)
             {
-                if (!controlsOn.Contains(kv.Key)) continue;
+                if (!controlsOn.Contains(kv.Key) || suppressed.Contains(kv.Key)) continue;
                 if (fp && FpStickControls.Contains(kv.Key)) continue;   // the sticks walk, climb and turn in first person
                 // First person, outside menus: the grips are hands (VrGrab), not buttons.
                 if (fp && !ui.DashboardShown && (kv.Key == "R.grip" || kv.Key == "L.grip" || kv.Key == "BothGrips")) continue;
@@ -166,7 +199,7 @@ namespace CasualtyVR
                 if (key != KeyCode.None) held.Add(key);
             }
 
-            UpdateLaser(Plugin.LaserHand.Value == "Left" ? left : right, ui, focus, seatedOrigin, unitsPerMetre);
+            if (posesFresh && ui != null) UpdateLaser(Plugin.LaserHand.Value == "Left" ? left : right, ui, focus, seatedOrigin, unitsPerMetre);
         }
 
         // First person (FIRSTPERSON_PLAN.md): left stick forward/back walks along the way you face, right stick
@@ -177,10 +210,6 @@ namespace CasualtyVR
 
         private static void FirstPersonSticks(XrNative.Hand left, XrNative.Hand right)
         {
-            Sample("FP.forward", left.stickY, 0.5f, 0.35f);
-            Sample("FP.back", -left.stickY, 0.5f, 0.35f);
-            Sample("FP.climb", right.stickY, 0.6f, 0.45f);
-            Sample("FP.crouch", -right.stickY, 0.6f, 0.45f);
             if (Plugin.FpTurning.Value == "Smooth")
             {
                 FirstPerson.TurnAxis = Mathf.Abs(right.stickX) > 0.2f ? right.stickX : 0f;
@@ -197,7 +226,7 @@ namespace CasualtyVR
             bool facingRight = FirstPerson.FacingRightNow;
             void Key(string control, string action)
             {
-                if (!controlsOn.Contains(control)) return;
+                if (!controlsOn.Contains(control) || suppressed.Contains(control)) return;
                 var k = KeyBinds.GetBind(action);
                 if (k != KeyCode.None) held.Add(k);
             }

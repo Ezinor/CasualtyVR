@@ -1,5 +1,31 @@
 # Changelog
 
+## Unreleased
+
+**Fixes**
+
+- **Controls no longer stick** when the headset stops showing the game: taking the headset off, opening the
+  headset's own menu, or losing head tracking left whatever you were holding (walking, attacking) held. A button
+  still held when you come back from the headset's menu now does nothing until you let go of it.
+- **Short tracking dropouts** no longer black out the view: when the headset loses its position for a moment, the
+  view keeps turning with your head. A controller that drops out keeps its last position for half a second instead
+  of vanishing, and that moment never counts as a throw or swing.
+- **Recenter faces you:** F9 (or *Recenter*) now also turns the game to face the way you look, not only moves it.
+  Recentring from the headset's own menu (e.g. holding the Quest button) is followed straight away.
+- **When the VR app closes or the headset disconnects**, VR stops cleanly with a message on the game window (press
+  F10 to start again), instead of failing silently every frame. The game also gets its own vsync back whenever the
+  headset is not driving the frame rate.
+- The game's own frame cap (its console `fps` command) no longer fights the headset's timing while VR runs.
+
+**Robustness and diagnostics**
+
+- If one VR feature hits an error (for example after a game update), only that feature turns off, with a message;
+  the view and the controls keep working. Before, one error stopped the whole VR view.
+- A note in the log and on the game window when the game version is not the one this release was tested with
+  (Demo 7.0.1).
+- The native part writes its own log, `BepInEx\CasualtyVR-bridge.log`, saved line by line so it survives a crash
+  (the previous game session's is kept as `CasualtyVR-bridge.prev.log`).
+
 ## 1.2.0 — 2026-10-07
 
 **First person**
