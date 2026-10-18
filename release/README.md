@@ -1,4 +1,4 @@
-# CasualtyVR 1.2.0
+# CasualtyVR 1.2.1
 
 A VR mod for **Casualties: Unknown** (Demo, game version 7.0.1). It shows the game as a 3D diorama in front of
 you: the terrain becomes solid blocks, liquids fill their tunnels, and characters and objects get real depth.

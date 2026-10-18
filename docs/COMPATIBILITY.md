@@ -62,3 +62,20 @@ VR start failures now show on the game window, not only in the log.
 
 Verified headless by pointing `XR_RUNTIME_JSON` at a missing file for one process (`Notice: ... no OpenXR runtime is
 available ...`).
+
+## Multiplayer: Casualties Together (KrokMP) 5.0.2 — read, not yet played (2026-10-17)
+
+Read from the decompiled `BepInEx/plugins/Together/CasualtiesMP.dll` (grade STATIC). It has not been played with
+CasualtyVR yet. A first test is due with 1.2.1.
+
+| Finding | Effect in VR | Grade |
+|---|---|---|
+| The co-op main menu, the player-list side menu and chat are drawn with IMGUI (`OnGUI`: `UIBullshit`, `UIMainMenu`, `Chat`) | Never in the headset (IMGUI goes only to the monitor); the laser cannot operate it. Host or join on the monitor, then press F10. Chat needs the keyboard | STATIC |
+| `UIBullshit` checks the cursor against those IMGUI rectangles using `Input.mousePosition` (our laser's virtual mouse) and sets `IS_CURSOR_OVERLAPPING`, which its `UIUtil.IsPointerOverUIElement` postfix reports as "over UI" | Pointing where the invisible co-op UI sits on the flat screen may block attacks or clicks there | INFERENCE |
+| `PauseHandler.Update` postfix keeps `Time.timeScale` in multiplayer; `SetTimeScale` prefix blocks slow-motion while anyone moves | Pause, the VR settings menu and the dashboard do not stop the game | STATIC |
+| `PlayerCamera.HandleInput` prefix skips the game's input while the chat box has focus | Controllers do nothing while typing in chat (by design) | STATIC |
+| Spectator mode: `PlayerCamera.main.following` = another player; the end screen is hidden | The diorama follows the spectated player (it follows the game's camera). First person stays on your own body (`PlayerCamera.main.body`): switch to the diorama (F7) to spectate | STATIC + INFERENCE |
+| `FluidManager.RenderFluids`: a counting prefix (`KrokV5Optimization.EvidenceParticles`) | No conflict with our postfix | STATIC |
+| `Body.PickUpItem` and the `PlayerCamera.Try*` actions are patched to sync | First-person grabs call `Body.PickUpItem`, so they go through its sync | STATIC |
+| `Camera.main` and `Input.mousePosition` are used for world aim (`Util.cs`) | Unaffected: the eye cameras are not tagged MainCamera, and the virtual mouse is in the game camera's screen space | STATIC |
+| Its patcher `KrokMP/autoupdater_patcher.dll` (6.5 KB) was not examined | — | — |
