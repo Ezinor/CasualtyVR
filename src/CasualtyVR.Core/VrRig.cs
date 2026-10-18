@@ -98,6 +98,10 @@ namespace CasualtyVR
 
         private float nextLogPump;
         private int statFrames;
+        // Frame-time distribution per log window (BUILD_PLAN Phase 0, IP 7/8): averages hide hitches.
+        private readonly System.Collections.Generic.List<float> frameMs = new System.Collections.Generic.List<float>(256);
+        private readonly System.Collections.Generic.List<int> slowFrames = new System.Collections.Generic.List<int>();
+        private float periodMs = 1000f / 90f;
         private float statWorst;
 
         private void Awake()
@@ -235,6 +239,7 @@ namespace CasualtyVR
                 if (lastFrameIndex != 0 && xrFrame.frameIndex != lastFrameIndex + 1)
                     Plugin.Log.LogWarning($"Frame index jumped {lastFrameIndex} -> {xrFrame.frameIndex}");
                 lastFrameIndex = xrFrame.frameIndex;
+                if (xrFrame.predictedDisplayPeriod > 0) periodMs = xrFrame.predictedDisplayPeriod / 1e6f;
                 if (xrFrame.shouldRender != 0 && xrFrame.viewsValid != 0)
                 {
                     UpdateSeatedOrigin(xrFrame);
@@ -817,11 +822,23 @@ namespace CasualtyVR
         {
             statFrames++;
             statWorst = Mathf.Max(statWorst, Time.unscaledDeltaTime);
+            float ms = Time.unscaledDeltaTime * 1000f;
+            frameMs.Add(ms);
+            // A frame that missed its display slot (the runtime paces at periodMs): its number, to find periodic hitches.
+            if (ms > periodMs * 1.5f && slowFrames.Count < 64) slowFrames.Add(Time.frameCount);
             if (Time.unscaledTime < nextLogPump) return;
             float span = Time.unscaledTime - (nextLogPump - 2f);
-            if (Plugin.Verbose) Plugin.Log.LogInfo($"perf: {statFrames / Mathf.Max(span, 1e-3f):F1} fps, worst {statWorst * 1000f:F1} ms, popup {PopupDepth.LastApplyMs:F2} ms/{PopupDepth.LastCount} (skipped {PopupDepth.LastSkipped}), voxels {voxels?.ChunkCount ?? 0} chunks/{voxels?.PendingCount ?? 0} pending/{voxels?.LastBuildMs ?? 0f:F1} ms, slabs {slabs?.SourceCount ?? 0}, extruded {extruder?.Count ?? 0}, liquid surface {liquids?.SurfaceCells ?? 0}, submitted {info.framesSubmitted}, waits skipped {info.waitsSkipped}, state {info.sessionState}, head {VrSpace.HeadPosition} fwd {VrSpace.HeadForward}");
+            frameMs.Sort();
+            int over = 0;
+            foreach (var f in frameMs) if (f > periodMs * 1.5f) over++;
+            string dist = frameMs.Count == 0 ? "" : $"frame p50 {frameMs[frameMs.Count / 2]:F1} p99 {frameMs[Mathf.Min(frameMs.Count - 1, (int)(frameMs.Count * 0.99f))]:F1} ms, over 1.5x period {over}/{frameMs.Count} (period {periodMs:F1} ms), ";
+            if (Plugin.Verbose && slowFrames.Count > 0) Plugin.Log.LogInfo($"perf: slow frames {string.Join(",", slowFrames)}");
+            frameMs.Clear();
+            slowFrames.Clear();
+            if (Plugin.Verbose) Plugin.Log.LogInfo($"perf: {statFrames / Mathf.Max(span, 1e-3f):F1} fps, worst {statWorst * 1000f:F1} ms, {dist}popup {PopupDepth.LastApplyMs:F2} ms/{PopupDepth.LastCount} (skipped {PopupDepth.LastSkipped}), voxels {voxels?.ChunkCount ?? 0} chunks/{voxels?.PendingCount ?? 0} pending/{voxels?.LastBuildMs ?? 0f:F1} ms, slabs {slabs?.SourceCount ?? 0}, extruded {extruder?.Count ?? 0}, liquid surface {liquids?.SurfaceCells ?? 0}, submitted {info.framesSubmitted}, waits skipped {info.waitsSkipped}, state {info.sessionState}, head {VrSpace.HeadPosition} fwd {VrSpace.HeadForward}");
             var body = PlayerCamera.main != null ? PlayerCamera.main.body : null;
             if (Plugin.Verbose && VrSpace.FirstPerson && eyes[0] != null) Plugin.Log.LogInfo($"fp: eye {eyes[0].transform.position} fwd {eyes[0].transform.forward} rot {VrSpace.Rotation.eulerAngles} scale {VrSpace.Scale:F2} facingRight {FirstPerson.FacingRightNow} billboards {FirstPerson.BillboardGroups} standing {(body != null && body.standing)} fpUpdate {FirstPerson.UpdateTime.Elapsed.TotalMilliseconds / Mathf.Max(1, statFrames):F2} ms/frame fpRender {FirstPerson.RenderTime.Elapsed.TotalMilliseconds / Mathf.Max(1, statFrames):F2} ms/frame popup {PopupDepth.LastApplyMs:F2} ms texts {(worldText != null ? worldText.Shown : 0)} rain {(rain != null ? $"{rain.Particles} playing {rain.Playing} alpha {(WorldGeneration.world != null && WorldGeneration.world.rainSprite != null ? WorldGeneration.world.rainSprite.color.a : -1f):F2}" : "-")}");
+            if (Plugin.Verbose && VrSpace.FirstPerson) { string path = FirstPerson.PathStats(); if (path != null) Plugin.Log.LogInfo("fp path: " + path); }
             FirstPerson.UpdateTime.Reset();
             FirstPerson.RenderTime.Reset();
             if (Plugin.Verbose) Plugin.Log.LogInfo($"input: laser={(VrInput.LaserMode ? "on" : "off")} hit={VrInput.LaserHit} modWindow={VrInput.OnModWindow} mouse={VrInput.VirtualMouse} held=[{VrInput.HeldList()}] body={(body != null ? body.transform.position.ToString() : "-")} profile='{VrInput.Profile}'");

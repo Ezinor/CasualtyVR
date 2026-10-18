@@ -6,7 +6,7 @@ yet.**
 
 - Backup before the changes: `Working/backups/pre-groupA-20261017` (deployed plugin, dev config, Core and bridge
   sources, tool scripts; based on git `380fc1a`).
-- New test: [`tools/vr-lifecycle.ps1`](../Tools/vr-lifecycle.ps1), with three scenarios (`input`, `heading`,
+- New test: [`tools/vr-lifecycle.ps1`](../tools/vr-lifecycle.ps1), with three scenarios (`input`, `heading`,
   `faults`).
 
 ## Changes

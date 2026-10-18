@@ -214,9 +214,61 @@ namespace CasualtyVR
             float rate = Mathf.Lerp(60f, 4f, Mathf.Clamp01(Plugin.FpSmoothing.Value));
             if (!hasEye || (eye - target).sqrMagnitude > 25f) { eye = target; hasEye = true; }   // spawn, teleport
             else eye = Vector3.Lerp(eye, target, 1f - Mathf.Exp(-rate * Time.unscaledDeltaTime));
+            if (Plugin.Verbose) RecordPath(target, eye, Scale, body.actualMaxSpeed);
             VrSpace.SetFirstPerson(eye, seatedOrigin, yaw, Scale);
             UpdateComfort(body);
             return true;
+        }
+
+        // ---- eye path statistics (verbose; BUILD_PLAN Phase 0, IP 9 / FP 8d) -----------------------------------
+        // Per frame, in metres: the target (the head limb, moved by 50 Hz physics) and the smoothed eye. Judder shows
+        // as uneven horizontal steps while running (many zero steps between physics ticks); bumps as vertical travel
+        // far larger than the net height change.
+        private static Vector3 pathLastTarget, pathLastEye;
+        private static bool pathHas;
+        private static int pathMoving, pathTargetStalls;
+        private static double pathEyeSum, pathEyeSq, pathTargetSum, pathTargetSq;
+        private static float pathMaxDy, pathVertTravel, pathStartY, pathEndY;
+
+        private static void RecordPath(Vector3 target, Vector3 eye, float scale, float maxSpeedUnits)
+        {
+            if (!pathHas) { pathHas = true; pathLastTarget = target; pathLastEye = eye; pathStartY = eye.y / scale; return; }
+            float s = 1f / Mathf.Max(scale, 1e-3f), dt = Mathf.Max(Time.unscaledDeltaTime, 1e-4f);
+            // Velocities (m/s), so uneven frame times are not counted as uneven motion; only frames at steady top speed
+            // (target over 80 % of the character's cap), so speeding up and slowing down are not counted either.
+            float tv = Mathf.Abs(target.x - pathLastTarget.x) * s / dt, ev = Mathf.Abs(eye.x - pathLastEye.x) * s / dt;
+            float edy = (eye.y - pathLastEye.y) * s;
+            if (tv > 0.8f * maxSpeedUnits * s || (ev > 0.8f * maxSpeedUnits * s && tv < 1e-3f))
+            {
+                pathMoving++;
+                pathEyeSum += ev; pathEyeSq += ev * ev;
+                pathTargetSum += tv; pathTargetSq += tv * tv;
+                if (tv < 1e-3f) pathTargetStalls++;
+            }
+            pathMaxDy = Mathf.Max(pathMaxDy, Mathf.Abs(edy));
+            pathVertTravel += Mathf.Abs(edy);
+            pathEndY = eye.y * s;
+            pathLastTarget = target;
+            pathLastEye = eye;
+        }
+
+        /// <summary>The window's eye path summary, then reset (null when first person has not run).</summary>
+        public static string PathStats()
+        {
+            if (!pathHas) return null;
+            string Cv(double sum, double sq, int n)
+            {
+                if (n < 2 || sum <= 0) return "-";
+                double mean = sum / n, sd = System.Math.Sqrt(System.Math.Max(0, sq / n - mean * mean));
+                return (sd / mean).ToString("F2");
+            }
+            string r = $"steady-speed {pathMoving} frames, speed CV eye {Cv(pathEyeSum, pathEyeSq, pathMoving)} target {Cv(pathTargetSum, pathTargetSq, pathMoving)}, " +
+                       $"target stalled {pathTargetStalls}/{pathMoving}, vertical max step {pathMaxDy * 100f:F1} cm, travel {pathVertTravel * 100f:F0} cm, net {(pathEndY - pathStartY) * 100f:F0} cm";
+            pathMoving = pathTargetStalls = 0;
+            pathEyeSum = pathEyeSq = pathTargetSum = pathTargetSq = 0;
+            pathMaxDy = pathVertTravel = 0f;
+            pathStartY = pathEndY;
+            return r;
         }
 
         /// <summary>

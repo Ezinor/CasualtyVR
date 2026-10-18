@@ -16,7 +16,7 @@ param([string[]]$Only = @())
 $ErrorActionPreference = "Stop"
 $root = Resolve-Path (Join-Path $PSScriptRoot "..")
 $d = "$env:LOCALAPPDATA\xr-sim\casualtyvr"
-$t = Join-Path $root "Tools\xr-sim\tools"
+$t = Join-Path $root "tools\xr-sim\tools"
 $log = Join-Path $root "Working\game-dev\BepInEx\LogOutput.log"
 $results = New-Object System.Collections.Generic.List[object]
 

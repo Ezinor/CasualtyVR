@@ -15,7 +15,7 @@ param(
     [switch]$RenderDoc,
     # Headless VR: run against xr-sim (per-process runtime, Quest 3 + VDXR geometry by default)
     [switch]$XrSim,
-    [string]$XrSimHeadset = (Join-Path $PSScriptRoot "..\Tools\xr-sim\headsets\prey-quest3-vdxr.json"),
+    [string]$XrSimHeadset = (Join-Path $PSScriptRoot "..\tools\xr-sim\headsets\prey-quest3-vdxr.json"),
     # Record what the mod submits with the xr-tape API layer, then check the trace after exit
     [switch]$XrTape,
     [switch]$NoWait,
@@ -66,7 +66,7 @@ try {
     }
     if ($XrTape) {
         $layerDir = Join-Path $env:LOCALAPPDATA "xr-tape\layer-x64"
-        if (-not (Test-Path (Join-Path $layerDir "xrtape_api_layer.json"))) { throw "xr-tape not installed: run Tools\xr-tape\tools\Install-XrTape.ps1 -Architecture x64" }
+        if (-not (Test-Path (Join-Path $layerDir "xrtape_api_layer.json"))) { throw "xr-tape not installed: run tools\xr-tape\tools\Install-XrTape.ps1 -Architecture x64" }
         $traceDir = Join-Path $GameDir ("CasualtyVR_Logs\xrtape-" + (Get-Date -Format "yyyyMMdd-HHmmss"))
         New-Item -ItemType Directory -Force $traceDir | Out-Null
         $env:XR_API_LAYER_PATH = $layerDir

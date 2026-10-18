@@ -4,7 +4,7 @@
 /dist/
 
 # Third-party tools and references live in their own repositories (see CLAUDE.md).
-/Tools/*/
+/tools/*/
 /VR Modding Playbook/
 
 # Machine-specific

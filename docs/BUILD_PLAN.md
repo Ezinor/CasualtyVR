@@ -39,6 +39,9 @@ there, for example *IP 7*, *FP 8c*, *M2c*.
 
 ### Phase 0 — Baseline and quick housekeeping (S)
 
+**Done 2026-10-18:** see [PHASE0_RECEIPT.md](PHASE0_RECEIPT.md). The 60/120-frame hitch is confirmed, so scan staggering is in
+Phase 2; the idle sway, the run bob and a moderate judder were measured for FP 8d.
+
 | Work | From |
 |---|---|
 | Frame-time histogram in `fp-perf.ps1` / `vr-perf-matrix.ps1` (p50, p99, frames over budget), plus the bridge's skipped waits and submit-interval spread | IP 7 and 8 (the measuring half) |
@@ -73,11 +76,11 @@ slider and a tab.
 |---|---|
 | Analog walking (half push = walk); the run speed shown in m/s, default unchanged | FP 8a, 8b (D1) |
 | Fade when the head is inside a block | FP 8c = IP 11 |
-| Vertical steadiness; judder fix if Phase 0 found it | FP 8d, IP 9 |
+| Vertical steadiness: idle sway and run bob (measured), interpolate the anchor between physics steps (judder) | FP 8d, IP 9 |
 | Snap blink | FP 8e |
 | Comfort presets on the Comfort tab, *Intense* default | FP 8f (D2) |
 | Scale pop | FP 8g = IP 12 |
-| Scan staggering, if Phase 0 found the hitch | IP 7 |
+| Scan staggering (Phase 0 confirmed the 60/120-frame hitch) | IP 7 |
 
 **Headset gate:** comfort, including walking at half push, landings, turning, and leaning into walls.
 

@@ -16,10 +16,11 @@ Machine-specific notes, if any, are in `CLAUDE.local.md` (not in git).
 - Release: `tools/package-release.ps1` -> `dist/CasualtyVR-<ver>.zip` (player docs in `release/`, receipts `docs/RELEASE_*.md`).
   Players get only Core + native bridge; logs are quiet unless `Debug.VerboseLog` or a headless run (`--cvr-autostart`).
 - First person (1.1): plan `docs/FIRSTPERSON_PLAN.md`, receipts `docs/FP*_RECEIPT.md`, release `docs/RELEASE_1.1.md`.
-  Perf: `tools/fp-perf.ps1` (docs/PERF_FP.md). Shaders: `tools/build-shaders.ps1 -Unity <Unity.exe>` builds `src/CasualtyVR.Shaders`
+  Perf: `tools/fp-perf.ps1` (docs/PERF_FP.md); frame-time spread and eye path: docs/PHASE0_RECEIPT.md, `tools/fp-path.ps1`. Shaders: `tools/build-shaders.ps1 -Unity <Unity.exe>` builds `src/CasualtyVR.Shaders`
   (Unity 2022.3.62f3, URP 14.0.12) into a bundle that is committed and deployed (docs/SHADERS.md). Layer modifiers:
   `--cvr-dbg-modifier <i>` (docs/LAYER_MODIFIERS.md).
 - Headset feedback rounds: docs/FP7_RECEIPT.md (`--cvr-dbg-talk` speech + damage number, `--cvr-dbg-settings <tab> --cvr-dbg-reset`).
+- **Build order: docs/BUILD_PLAN.md** (phases 0–8; merges IMPROVEMENT_PLAN, FIRSTPERSON_REVIEW, VRMENU_REVIEW).
 - Review plan: docs/IMPROVEMENT_PLAN.md (groups A–E). Group A (input/session lifecycle, recenter heading, fault isolation,
   bridge log `BepInEx/CasualtyVR-bridge.log`): docs/LIFECYCLE_RECEIPT.md, test `tools/vr-lifecycle.ps1` (xr-sim session states,
   focus, validity; flags `--cvr-dbg-recenter <s>`, `--cvr-dbg-throw <s>`). Read the Unity player log in tests, not LogOutput.log (buffered).
@@ -42,8 +43,8 @@ The repository holds no game files. Everything under `Working/` and `dist/` is l
    `CasualtiesUnknown` to `CasualtyVRDevCopy` (same length; keep the original as `globalgamemanagers.orig`). See docs/BASELINE_RECEIPT.md.
 3. `tools/deploy-dev.ps1` builds the managed projects, the native bridge (CMake, "Visual Studio 16 2019" generator, v142 toolset)
    and deploys them with the sandbox patcher. The OpenXR SDK files it needs are in `third_party/`.
-4. Test tools: clone https://github.com/phunkaeg/xr-sim and https://github.com/phunkaeg/xr-tape into `Tools/xr-sim` and
-   `Tools/xr-tape` (git-ignored) and build them as their READMEs say.
+4. Test tools: clone https://github.com/phunkaeg/xr-sim and https://github.com/phunkaeg/xr-tape into `tools/xr-sim` and
+   `tools/xr-tape` (git-ignored) and build them as their READMEs say.
 
 ## Never touch the real game data
 
@@ -60,17 +61,17 @@ The repository holds no game files. Everything under `Working/` and `dist/` is l
   Seed 1234 world hash `4947A0FE6D30C272`. Reports: `Working/game-dev/BepInEx/CasualtyVR/run-<stamp>/`.
 - Plugins must run behaviour on their own `DontDestroyOnLoad` GameObject: the game destroys BepInEx's manager object.
 - VR headless: `tools/launch-dev.ps1 -Windowed -XrSim -XrTape --cvr-vr --cvr-autostart --cvr-seed 1234 --cvr-quit`
-  (the xr-tape check must pass 19/19). Compositor image: `Tools/xr-sim/tools/xrsim-shot.ps1 -Dir $env:LOCALAPPDATA\xr-sim\casualtyvr`.
+  (the xr-tape check must pass 19/19). Compositor image: `tools/xr-sim/tools/xrsim-shot.ps1 -Dir $env:LOCALAPPDATA\xr-sim\casualtyvr`.
   Cost attribution: `tools/vr-perf-matrix.ps1`. Real headset: `tools/launch-dev.ps1 --cvr-vr` (F10 toggle, F9 recenter).
 - UI in VR: docs/PHASE3_UI_RECEIPT.md (canvases moved to a pixel-equal UI camera; layers 29 desktop-only,
   30 UI, 31 VR-only). `WindowPlacement` can keep the game window on a chosen monitor (`Window.PreferredDisplay`, empty by default).
 - Controllers: docs/PHASE3_INPUT_RECEIPT.md (Harmony on UnityEngine.Input; one OpenXR action per hand,
-  because xr-sim ignores subaction paths). Drive them headless with `Tools/xr-sim/tools/xrsim-cmd.ps1 -Dir
+  because xr-sim ignores subaction paths). Drive them headless with `tools/xr-sim/tools/xrsim-cmd.ps1 -Dir
   $env:LOCALAPPDATA\xr-sim\casualtyvr "stick l 1 0"` etc. Probe test commands: `--cvr-command kill|!selfdestruct|!endsequence`.
 - Never move a transform that has a Collider2D for rendering purposes (90 -> 10 fps, see docs/PHASE1_XR_RECEIPT.md).
 
 ## Tools
 
-- `Tools/xr-sim` (simulated OpenXR runtime, `tools/run-with-xrsim.ps1`), `Tools/xr-tape` (`tools/Invoke-XrTape.ps1 -Check`).
+- `tools/xr-sim` (simulated OpenXR runtime, `tools/run-with-xrsim.ps1`), `tools/xr-tape` (`tools/Invoke-XrTape.ps1 -Check`).
 - Builds: the native bridge (`src/CasualtyVR.XrBridge`, built by `tools/deploy-dev.ps1`) and xr-sim/xr-tape use CMake
   "Visual Studio 16 2019". The bridge links the CRT statically, so players need no Visual C++ runtime.
