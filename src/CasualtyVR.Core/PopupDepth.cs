@@ -127,7 +127,7 @@ namespace CasualtyVR
         private static void Apply()
         {
             var sw = System.Diagnostics.Stopwatch.StartNew();
-            if (Time.frameCount - cachedFrame >= RefreshFrames) RefreshCache();
+            if (Scans.Due(cachedFrame, RefreshFrames, 0)) { long t0 = Scans.Start(); RefreshCache(); Scans.Stop("pop-up depth", t0); }
             // Record every original first: once a parent moves, its children's world positions change.
             for (int i = 0; i < entries.Count; i++)
             {

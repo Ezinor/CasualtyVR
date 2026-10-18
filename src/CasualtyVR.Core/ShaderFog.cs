@@ -73,7 +73,7 @@ namespace CasualtyVR
                 if (!on) RestoreAll();
                 else lastScan = -1000;
             }
-            if (active && Time.frameCount - lastScan >= 120) Scan();
+            if (active && Scans.Due(lastScan, 120, 8)) { long t0 = Scans.Start(); Scan(); Scans.Stop("shader fog", t0); }
         }
 
         // New materials appear at runtime (per-limb instances, spawned things): a rescan every two seconds.

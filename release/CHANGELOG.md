@@ -1,5 +1,23 @@
 # Changelog
 
+## 1.3.0-test2 — 2026-10-18 (test build)
+
+Everything in test1, plus **first-person comfort** (VR settings › *Comfort*):
+
+- **Walk on a half push:** the left stick part way walks at a real walking speed (1.4 m/s, adjustable); all the way
+  runs as before. The running speed is now shown in metres per second (6.5 m/s by default, unchanged).
+- **Fade inside walls** (on): leaning into a wall or putting your head into a block fades the view to black, instead
+  of showing what is behind it.
+- **Smoother running:** now and then the game corrects the character's position by a few centimetres in one frame;
+  the view used to jolt with it. It now follows the character's speed and eases such corrections out.
+- **Comfort presets:** *Intense* (the default; as before), *Moderate* and *Gentle*. Under *More settings*:
+  - **Steady eye height:** your eye height no longer sways with the character's idle and running animation, and
+    steps up and down glide. Jumps and falls still move you. On in Moderate and Gentle.
+  - **Snap blink:** a short fade hides the snap turn. On in Moderate and Gentle.
+- **No resize after spawn:** the world no longer changes size a moment after you appear in first person (the
+  character's eye height is remembered).
+- **Fewer periodic hitches:** the mod's background scans (lights, walls, bodies) no longer all run on the same frame.
+
 ## 1.3.0-test1 — 2026-10-18 (test build)
 
 **A new VR settings menu** (F12, or the pause menu's *VR* button)

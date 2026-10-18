@@ -16,7 +16,7 @@ namespace CasualtyVR
     public class Plugin : BaseUnityPlugin
     {
         public const string Guid = "casualtyvr.core";
-        public const string Version = "1.3.0-test1";
+        public const string Version = "1.3.0-test2";
         /// <summary>BepInEx needs a plain version number (test builds carry a suffix in Version).</summary>
         public const string NumericVersion = "1.3.0";
         /// <summary>The game version this release was tested with (Application.version).</summary>
@@ -119,6 +119,12 @@ namespace CasualtyVR
         internal static ConfigEntry<string> FpRagdollView;
         internal static ConfigEntry<string> FpTurning;
         internal static ConfigEntry<float> FpTurnSpeed;
+        internal static ConfigEntry<bool> FpAnalogWalk;
+        internal static ConfigEntry<float> FpWalkSpeed;
+        internal static ConfigEntry<bool> FpSteadyHeight;
+        internal static ConfigEntry<bool> FpSnapBlink;
+        internal static ConfigEntry<bool> FpWallFade;
+        internal static ConfigEntry<float> FpEyeUnits;
 
         private void Awake()
         {
@@ -216,6 +222,13 @@ namespace CasualtyVR
             FpRagdollView = Config.Bind("FirstPerson", "RagdollView", "Stay", new ConfigDescription("While the body is down (ragdoll, knocked over): stay in first person, or switch to the diorama until it stands up.", new AcceptableValueList<string>("Stay", "Diorama")));
             FpTurning = Config.Bind("FirstPerson", "Turning", "Snap", new ConfigDescription("Right stick sideways: Snap = flick to turn around; Smooth = turn continuously.", new AcceptableValueList<string>("Snap", "Smooth")));
             FpTurnSpeed = Config.Bind("FirstPerson", "SmoothTurnSpeed", 120f, "Degrees per second for smooth turning.");
+            // Comfort (docs/FIRSTPERSON_REVIEW.md FP-8; presets in the VR settings' Comfort tab, Intense = these defaults).
+            FpAnalogWalk = Config.Bind("FirstPerson", "AnalogWalk", true, "Left stick pushed part way: walk (WalkSpeedMetres); pushed all the way: run (MoveSpeed). Off: any push runs.");
+            FpWalkSpeed = Config.Bind("FirstPerson", "WalkSpeedMetres", 1.4f, "Walking speed on a half push of the left stick, in metres per second (a real walk is about 1.4).");
+            FpSteadyHeight = Config.Bind("FirstPerson", "SteadyHeight", false, "Keep your eye height steady while standing and running: no idle sway or running bob from the character's animation; steps up and down glide. Jumps and falls still move you.");
+            FpSnapBlink = Config.Bind("FirstPerson", "SnapBlink", false, "A short blink (fade) hides the snap turn.");
+            FpWallFade = Config.Bind("FirstPerson", "FadeInsideWalls", true, "The view fades to black while your head is inside a block or outside the tunnel's sides (leaning into a wall).");
+            FpEyeUnits = Config.Bind("FirstPerson", "MeasuredEyeHeight", 0f, "Internal: the character's standing eye height in blocks, as last measured, so the automatic world scale is right from the first frame (0 = not measured yet).");
             FlipY = Config.Bind("Debug", "FlipY", true, "Flip eye images vertically (Unity D3D render textures are stored bottom-up).");
 
             foreach (var (control, action) in VrInput.Defaults)

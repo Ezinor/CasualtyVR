@@ -74,7 +74,7 @@ namespace CasualtyVR
         public void Update(Body body)
         {
             if (body == null || body.limbs == null || body.limbs.Length < 9) { SetActive(false); return; }
-            if (body != built || Time.frameCount - lastScan >= 30) Rebuild(body);
+            if (body != built || Scans.Due(lastScan, 30, 14)) { long t0 = Scans.Start(); Rebuild(body); Scans.Stop("arms", t0); }
             if (front == null) return;
 
             // Right controller = the character's active hand.

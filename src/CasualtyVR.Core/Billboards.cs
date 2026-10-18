@@ -52,7 +52,7 @@ namespace CasualtyVR
 
         public void Update(Vector3 eye, Body player)
         {
-            if (Time.frameCount - lastScan >= 30) Rescan(player);
+            if (Scans.Due(lastScan, 30, 2)) { long t0 = Scans.Start(); Rescan(player); Scans.Stop("billboards", t0); }
             stale.Clear();
             foreach (var kv in groups)
             {

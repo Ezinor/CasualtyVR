@@ -137,10 +137,10 @@ if (Want "heading") {
     $re = Wait-For "Recentered \(key\).*heading (60|300)\.0 deg" 60
     Check "heading: F9 takes the heading" $re "Recentered (key): ... heading 300.0 deg (60 to the left)"
     # Head forward in world after the recenter: straight into the diorama (+z), although the head is turned 60 degrees.
-    $n = Count "perf: "
+    $n = Count "perf: .* fwd "
     $deadline = (Get-Date).AddSeconds(8)
-    while ((Get-Date) -lt $deadline -and (Count "perf: ") -le $n) { Start-Sleep -Milliseconds 300 }
-    $line = (Select-String -Path $log -Pattern "perf: " | Select-Object -Last 1).Line
+    while ((Get-Date) -lt $deadline -and (Count "perf: .* fwd ") -le $n) { Start-Sleep -Milliseconds 300 }
+    $line = (Select-String -Path $log -Pattern "perf: .* fwd " | Select-Object -Last 1).Line
     $m = [regex]::Match($line, 'fwd \(([-\d.]+), ([-\d.]+), ([-\d.]+)\)')
     $ok = $m.Success -and [math]::Abs([double]$m.Groups[1].Value) -lt 0.05 -and [double]$m.Groups[3].Value -gt 0.99
     Check "heading: diorama is in front of the turned head" $ok ("world forward " + $m.Value)

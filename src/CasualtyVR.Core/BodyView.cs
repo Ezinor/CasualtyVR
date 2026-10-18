@@ -58,7 +58,7 @@ namespace CasualtyVR
         public void Update(Body body)
         {
             if (body == null || body.limbs == null || body.limbs.Length < 15) { SetActive(false); return; }
-            if (body != built || Time.frameCount - lastScan >= 30) Rescan(body);
+            if (body != built || Scans.Due(lastScan, 30, 6)) { long t0 = Scans.Start(); Rescan(body); Scans.Stop("body view", t0); }
             float s = PopupDepth.Scale * Plugin.FpBodyDepth.Value;
             Vector3 back = Vector3.zero;
             if (Plugin.FpBodyBack.Value != 0f)

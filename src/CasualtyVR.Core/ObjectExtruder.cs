@@ -54,7 +54,7 @@ namespace CasualtyVR
             bool on = On;
             if (root.activeSelf != on) root.SetActive(on);
             if (!on) { if (entries.Count > 0) ClearAll(); return; }
-            if (Time.frameCount - lastScan >= 30) Rescan();
+            if (Scans.Due(lastScan, 30, 10)) { long t0 = Scans.Start(); Rescan(); Scans.Stop("object depth", t0); }
 
             stale.Clear();
             foreach (var kv in entries)

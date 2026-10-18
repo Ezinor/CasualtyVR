@@ -172,8 +172,10 @@ namespace CasualtyVR
             Set("Y", (input.buttons & 8) != 0);
             Set("Menu", (input.buttons & 16) != 0);
             // First-person stick directions (used by FirstPersonSticks), sampled here so focus regain sees them.
-            Sample("FP.forward", left.stickY, 0.5f, 0.35f);
-            Sample("FP.back", -left.stickY, 0.5f, 0.35f);
+            // Analog walking (FP 8a): a light push already moves (and walks); see FirstPersonSticks.
+            bool analog = Plugin.FpAnalogWalk.Value;
+            Sample("FP.forward", left.stickY, analog ? 0.25f : 0.5f, analog ? 0.15f : 0.35f);
+            Sample("FP.back", -left.stickY, analog ? 0.25f : 0.5f, analog ? 0.15f : 0.35f);
             Sample("FP.climb", right.stickY, 0.6f, 0.45f);
             Sample("FP.crouch", -right.stickY, 0.6f, 0.45f);
             // Both grips together are their own control (ragdoll); the single-grip actions pause meanwhile.
@@ -194,7 +196,7 @@ namespace CasualtyVR
             bool settings = VrSettingsMenu.IsOpen;
             MenuStickY = !settings ? 0f : Mathf.Abs(right.stickY) >= Mathf.Abs(left.stickY) ? right.stickY : left.stickY;
             if (fp && !settings) FirstPersonSticks(left, right);
-            else FirstPerson.TurnAxis = 0f;
+            else { FirstPerson.TurnAxis = 0f; FirstPerson.Walking = false; }
             foreach (var kv in Plugin.ControlBinds)
             {
                 if (!controlsOn.Contains(kv.Key) || suppressed.Contains(kv.Key)) continue;
@@ -233,6 +235,11 @@ namespace CasualtyVR
                 if (turn && !turnWas) FirstPerson.RequestTurn();
                 turnWas = turn;
             }
+            // Walk or run (FP 8a): part way = walk, all the way = run, with a little hysteresis so the speed does not
+            // flicker at the boundary. No push (keyboard) leaves the game's own speed.
+            float push = Mathf.Abs(left.stickY);
+            if (push < 0.15f || push >= 0.82f) FirstPerson.Walking = false;
+            else if (push <= 0.72f) FirstPerson.Walking = true;
             bool facingRight = FirstPerson.FacingRightNow;
             void Key(string control, string action)
             {

@@ -124,6 +124,8 @@ try {
         $v2 = Wait-For "VR settings: FirstPerson\.FallVignette = 0\.8" 3
         Check "laser: slider press sets the value under the pointer" $v1 "FallVignette = 0.2"
         Check "laser: slider drag follows the pointer" $v2 "FallVignette = 0.8"
+        [void](Click "segment Moderate")
+        Check "laser: the comfort preset sets its settings" ((Wait-For "Comfort preset: Moderate" 5) -and (Wait-For "VR settings: FirstPerson\.SnapBlink = True" 3)) "Comfort preset: Moderate; FirstPerson.SnapBlink = True"
         [void](Click "more")
         Check "laser: More settings shows the tuning rows" (Wait-For "VR settings: tab 'Comfort' \(more\)" 5) "tab 'Comfort' (more)"
         [void](Click "tab View")

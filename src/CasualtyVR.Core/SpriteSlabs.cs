@@ -50,7 +50,7 @@ namespace CasualtyVR
 
             int wanted = Mathf.Clamp(Plugin.SlabLayers.Value, 1, 8);
             if (wanted != layers) { ClearAll(); layers = wanted; }
-            if (Time.frameCount - lastScan >= RescanFrames) Rescan();
+            if (Scans.Due(lastScan, RescanFrames, 26)) { long t0 = Scans.Start(); Rescan(); Scans.Stop("character thickness", t0); }
 
             float step = Plugin.SlabThickness.Value * PopupDepth.Scale / layers;
             stale.Clear();

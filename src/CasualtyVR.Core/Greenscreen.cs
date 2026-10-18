@@ -117,7 +117,7 @@ namespace CasualtyVR
         {
             if (VrRig.Instance != null && VrRig.Instance.IsEyeCamera(cam)) FogBegin();
             if (!(Plugin.GreenscreenOn || FirstPerson.VoidSides) || VrRig.Instance == null || !VrRig.Instance.IsEyeCamera(cam)) return;
-            if (Time.frameCount - scannedFrame > 120)
+            if (Scans.Due(scannedFrame, 120, 12))
             {
                 scannedFrame = Time.frameCount;
                 back.Clear();

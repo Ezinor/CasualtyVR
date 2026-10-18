@@ -75,6 +75,10 @@ slider and a tab.
 
 ### Phase 2 — First-person comfort (M)
 
+**Built 2026-10-18, test build `1.3.0-test2`:** see [PHASE2_RECEIPT.md](PHASE2_RECEIPT.md). The judder turned out to
+be position corrections, not 50 Hz stepping (the bodies are already interpolated). The diorama's pop-up depth refresh
+(4–10 ms every 120 frames) is moved to Phase 7. The headset gate (comfort) is open.
+
 | Work | From |
 |---|---|
 | Analog walking (half push = walk); the run speed shown in m/s, default unchanged | FP 8a, 8b (D1) |
@@ -141,6 +145,7 @@ slider and a tab.
 | Native teardown on the render thread | IP 3 |
 | Depth layer submission; eye resolution scale | IP 13 |
 | Re-run the Phase 0 histogram and compare | IP 7/8 |
+| The pop-up depth refresh (`FindObjectsOfType<Renderer>`, 4–10 ms every 120 frames): a spatial query or an incremental refresh (Phase 2 measurement) | IP 7 |
 
 ### Phase 8 — Release 1.3.0 (S–M)
 

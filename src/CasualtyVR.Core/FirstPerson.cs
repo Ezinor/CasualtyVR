@@ -22,6 +22,42 @@ namespace CasualtyVR
     /// * In the eyes: the character's own body (incl. held items), the game's line-of-sight mask and the
     ///   diorama frame are hidden.
     /// </summary>
+    /// <summary>
+    /// Comfort presets (FP 8f, decision D2: Intense is the default). A preset sets several comfort settings at once; the
+    /// menu shows which preset the current settings match, or none (custom). Running speed and turning only change for
+    /// Gentle, so Intense and Moderate keep your own.
+    /// </summary>
+    internal static class ComfortPresets
+    {
+        public static readonly string[] Names = { "Intense", "Moderate", "Gentle" };
+
+        public static void Apply(string name)
+        {
+            bool gentle = name == "Gentle", calm = gentle || name == "Moderate";
+            Plugin.FpSnapBlink.Value = calm;
+            Plugin.FpSteadyHeight.Value = calm;
+            Plugin.FpVignette.Value = gentle ? 0.6f : calm ? 0.3f : 0f;
+            Plugin.FpRagdollView.Value = gentle ? "Diorama" : "Stay";
+            if (gentle)
+            {
+                Plugin.FpMoveSpeed.Value = Mathf.Min(Plugin.FpMoveSpeed.Value, 0.5f);   // about 4 m/s (Meta: slide at 4-6 m/s at most)
+                Plugin.FpTurning.Value = "Snap";
+            }
+            Plugin.Log.LogInfo($"Comfort preset: {name}");
+        }
+
+        /// <summary>The preset the current settings match, or -1 (custom).</summary>
+        public static int Current()
+        {
+            bool blink = Plugin.FpSnapBlink.Value, steady = Plugin.FpSteadyHeight.Value, stay = Plugin.FpRagdollView.Value == "Stay";
+            float v = Plugin.FpVignette.Value;
+            if (blink && steady && Mathf.Abs(v - 0.6f) < 0.01f && !stay && Plugin.FpMoveSpeed.Value <= 0.5f + 1e-3f && Plugin.FpTurning.Value == "Snap") return 2;
+            if (blink && steady && Mathf.Abs(v - 0.3f) < 0.01f && stay) return 1;
+            if (!blink && !steady && v < 0.01f && stay) return 0;
+            return -1;
+        }
+    }
+
     internal sealed class FirstPerson
     {
         public const float StandingEyeMetres = 1.6f;
@@ -46,6 +82,20 @@ namespace CasualtyVR
         public static float TurnAxis;
         /// <summary>The first-person scale in use (blocks per metre), or 0 outside first person (the menu's "World scale").</summary>
         public static float CurrentScale => instance != null && Active ? instance.Scale : 0f;
+        /// <summary>The scale first person uses or will use: set, measured, or remembered from an earlier run; 0 if unknown.</summary>
+        public static float ScaleEstimate => Plugin.FpUnitsPerMetre.Value > 0f ? Plugin.FpUnitsPerMetre.Value
+            : instance != null && instance.EyeUnits > 0f ? instance.EyeUnits / StandingEyeMetres
+            : Plugin.FpEyeUnits.Value > 0.5f ? Plugin.FpEyeUnits.Value / StandingEyeMetres : 0f;
+        /// <summary>Analog walking (FP 8a): the left stick is pushed only part way (set by VrInput), so the top speed is a walk.</summary>
+        public static bool Walking;
+
+        // Comfort overlays (FP 8c, 8e): the view fades while the head is inside a wall, and blinks on a snap turn.
+        private static float wallFade, blink;
+        private bool headInWall;
+        private static HashSet<int> seeThrough;
+        // --cvr-dbg-nofilter: the eye follows the target as before Phase 2 (no velocity-led horizontal filter), for comparison.
+        private static readonly bool DbgNoFilter = System.Array.IndexOf(System.Environment.GetCommandLineArgs(), "--cvr-dbg-nofilter") >= 0;
+        private float ungroundedFor;
 
         private bool facingRight = true;
         private float yaw = 90f;   // tracking -> world yaw: 90 = the player's forward is world +x
@@ -111,6 +161,9 @@ namespace CasualtyVR
 
         public FirstPerson()
         {
+            // Headless test: --cvr-dbg-preset <Intense|Moderate|Gentle> applies a comfort preset (saved to the config).
+            string preset = ArgAfter("--cvr-dbg-preset");
+            if (preset != null) ComfortPresets.Apply(System.Array.Find(ComfortPresets.Names, n => n.Equals(preset, System.StringComparison.OrdinalIgnoreCase)) ?? "Intense");
             wallRoot = new GameObject("CasualtyVR.FrontWall") { hideFlags = HideFlags.DontSave };
             Object.DontDestroyOnLoad(wallRoot);
             instance = this;
@@ -125,9 +178,15 @@ namespace CasualtyVR
             get
             {
                 if (Plugin.FpUnitsPerMetre.Value > 0f) return Plugin.FpUnitsPerMetre.Value;
-                return (measuredEyeUnits > 0f ? measuredEyeUnits : 2.4f) / StandingEyeMetres;
+                return (EyeUnits > 0f ? EyeUnits : 2.4f) / StandingEyeMetres;
             }
         }
+
+        /// <summary>
+        /// The character's standing eye height in blocks: measured this run, or remembered from the last one (FP 8g, IP 12:
+        /// the automatic scale used a guess until the character first stood still, so the world resized once after spawn).
+        /// </summary>
+        private float EyeUnits => measuredEyeUnits > 0f ? measuredEyeUnits : Plugin.FpEyeUnits.Value > 0.5f ? Plugin.FpEyeUnits.Value : -1f;
 
         /// <summary>
         /// Once per frame before the views are applied. Returns whether first person is in effect; when it is,
@@ -147,7 +206,9 @@ namespace CasualtyVR
                 PopupDepth.Invalidate();   // FP bands differ (PopupDepth.DepthFor)
                 hasEye = false;
                 if (want) { facingRight = body.isRight; yaw = facingRight ? 90f : -90f; }
-                Plugin.Log.LogInfo($"First person: {(want ? "on" : "off")} (running speed {(want ? Mathf.Clamp(Plugin.FpMoveSpeed.Value, 0.3f, 1f) : 1f) * 100f:F0}% of the game's)");
+                Plugin.Log.LogInfo($"First person: {(want ? "on" : "off")} (running speed {(want ? Mathf.Clamp(Plugin.FpMoveSpeed.Value, 0.3f, 1f) : 1f) * 100f:F0}% of the game's, " +
+                    $"half push walks {(Plugin.FpAnalogWalk.Value ? $"at {Plugin.FpWalkSpeed.Value:F1} m/s" : "off")}, comfort {(ComfortPresets.Current() is int p && p >= 0 ? ComfortPresets.Names[p] : "custom")}, " +
+                    $"steady height {Plugin.FpSteadyHeight.Value}, snap blink {Plugin.FpSnapBlink.Value}, wall fade {Plugin.FpWallFade.Value}, scale {Scale:F2}{(measuredEyeUnits > 0f ? "" : Plugin.FpEyeUnits.Value > 0.5f ? " (remembered eye height)" : " (guessed)")})");
             }
             UpdateFrontWall();
             if (backRoot.activeSelf != Active) backRoot.SetActive(Active);
@@ -157,19 +218,26 @@ namespace CasualtyVR
                 turnRequested = false;
                 ShowFog(false);
                 shaderFog.Set(false, Color.black, 0f, 1f, 0f);
-                blackout = vignette = 0f;
+                blackout = vignette = wallFade = blink = 0f;
                 return false;
             }
             UpdateBackProxies();
 
             if (body != lastBody) { lastBody = body; measuredEyeUnits = -1f; eyeAboveNeck = -1f; standingFor = 0f; lastRefresh = -1000; }
-            if (Time.frameCount - lastRefresh >= 60) Refresh(body);
+            if (Scans.Due(lastRefresh, 60, 28)) { long t0 = Scans.Start(); Refresh(body); Scans.Stop("fp body", t0); }
             Measure(body);
             if (Plugin.Verbose && !rigDumped && Time.timeSinceLevelLoad > 18f) DumpRig(body);
 
             // Turning: a flick turns around (Snap); or the right stick turns smoothly (Smooth). Walking forward follows
             // whichever way along the tunnel the turned view faces.
-            if (turnRequested) { yaw += 180f; turnRequested = false; }
+            blink = Mathf.MoveTowards(blink, 0f, Time.unscaledDeltaTime / 0.12f);
+            if (turnRequested)
+            {
+                yaw += 180f;
+                turnRequested = false;
+                // Snap blink (FP 8e): this frame is black, then the view fades back in over 0.12 s.
+                if (Plugin.FpSnapBlink.Value) { blink = 1f; if (Plugin.Verbose) Plugin.Log.LogInfo("First person: snap turn with a blink"); }
+            }
             if (Plugin.FpTurning.Value == "Smooth") yaw += TurnAxis * Plugin.FpTurnSpeed.Value * Time.unscaledDeltaTime;
             yaw = Mathf.Repeat(yaw + 180f, 360f) - 180f;
             float s = Mathf.Sin(yaw * Mathf.Deg2Rad);
@@ -211,12 +279,44 @@ namespace CasualtyVR
                 y = Mathf.Clamp(neck.y + eyeAboveNeck, head.y - 0.6f, head.y + 0.6f);
                 if (y > head.y && world.GetBlock(new Vector2(x, y + 0.15f)) != 0) y = head.y;
             }
+            // Steady height (FP 8d): standing upright on the ground, the eye is the standing eye height above the feet
+            // (the bottom of the body's box collider, which slides along the ground) instead of riding the head limb, which
+            // the walk and idle animations swing up and down (Phase 0: 18 cm of idle sway, about 1.4 m of running bob per
+            // 2 s). A moment off the ground (a bump while running) does not count; a jump or a fall does. The game's own
+            // squat on landing does not count either (that is the landing dip); crouching on purpose does.
+            ungroundedFor = body.grounded ? 0f : ungroundedFor + Time.deltaTime;
+            bool steady = Plugin.FpSteadyHeight.Value && body.standing && body.currentClimbable == null && !body.crouching
+                          && body.col != null && body.rb != null && EyeUnits > 0f
+                          && (body.grounded || (ungroundedFor < 0.15f && body.rb.velocity.y < 2f));
+            if (steady)
+            {
+                float feetEye = body.col.bounds.min.y + EyeUnits;
+                if (world.GetBlock(new Vector2(x, feetEye + 0.15f)) == 0) y = feetEye;   // not into a low ceiling
+            }
             var target = new Vector3(x, y, EyeZ);
-            // Smoothing 0 = locked to the head limb; 1 = heavy damping.
+            // Smoothing 0 = locked to the head limb; 1 = heavy damping. With steady height the vertical follow is gentler,
+            // so a step up or down glides (about 0.1 s) and a landing dip is absorbed.
             float rate = Mathf.Lerp(60f, 4f, Mathf.Clamp01(Plugin.FpSmoothing.Value));
             if (!hasEye || (eye - target).sqrMagnitude > 25f) { eye = target; hasEye = true; }   // spawn, teleport
-            else eye = Vector3.Lerp(eye, target, 1f - Mathf.Exp(-rate * Time.unscaledDeltaTime));
-            if (Plugin.Verbose) RecordPath(target, eye, Scale, body.actualMaxSpeed);
+            else
+            {
+                float dt = Time.unscaledDeltaTime;
+                var next = Vector3.Lerp(eye, target, 1f - Mathf.Exp(-rate * dt));
+                // Horizontal judder (IP 9, measured in Phase 2 with --cvr-dbg-pathdump): the game's bodies are already
+                // interpolated, so the position moves every frame, but now and then it jumps about 15 cm in one frame and
+                // then stalls (a position correction: the body's velocity stays steady meanwhile). Standing, the eye moves
+                // at the body's velocity and only eases out the difference (8/s), so a jump is spread over a few frames
+                // and steady running has no lag behind the body.
+                if (!DbgNoFilter && body.standing && body.rb != null)
+                {
+                    float ahead = eye.x + body.rb.velocity.x * Time.deltaTime;
+                    next.x = Mathf.Lerp(ahead, target.x, 1f - Mathf.Exp(-Mathf.Min(rate, 8f) * dt));
+                }
+                if (steady) next.y = Mathf.Lerp(eye.y, target.y, 1f - Mathf.Exp(-Mathf.Min(rate, 12f) * dt));
+                eye = next;
+            }
+            if (DbgPathDump) DbgState = $"{(steady ? "S" : "n")}{(body.grounded ? "g" : "a")}{(body.crouching || body.crouchAmount >= 0.05f ? "c" : "")}{(body.col != null ? ((body.col.bounds.min.y) % 10f).ToString("F2") : "-")}";
+            if (Plugin.Verbose) RecordPath(target, eye, Scale, body);
             VrSpace.SetFirstPerson(eye, seatedOrigin, yaw, Scale);
             UpdateComfort(body);
             return true;
@@ -226,31 +326,42 @@ namespace CasualtyVR
         // Per frame, in metres: the target (the head limb, moved by 50 Hz physics) and the smoothed eye. Judder shows
         // as uneven horizontal steps while running (many zero steps between physics ticks); bumps as vertical travel
         // far larger than the net height change.
-        private static Vector3 pathLastTarget, pathLastEye;
+        // Phase 2: steady-speed frames are chosen by the body's physics velocity (over 80 % of its current cap), and every
+        // one of them counts, including frames where the raw target did not move (a stall), so the raw target's and the
+        // eye's evenness compare directly.
+        private static Vector3 pathLastRaw, pathLastEye;
         private static bool pathHas;
-        private static int pathMoving, pathTargetStalls;
-        private static double pathEyeSum, pathEyeSq, pathTargetSum, pathTargetSq;
-        private static float pathMaxDy, pathVertTravel, pathStartY, pathEndY;
+        private static int pathSteady, pathRawStalls, pathMovingFrames;
+        private static double pathRawSum, pathRawSq, pathEyeSum, pathEyeSq, pathMovingSpeed;
+        private static float pathMaxDy, pathVertTravel, pathGroundTravel, pathStartY, pathEndY, pathLastFixed;
+        // --cvr-dbg-pathdump: per steady frame, raw speed / body speed (m/s) / frame ms / s = a physics step ran.
+        private static readonly bool DbgPathDump = System.Array.IndexOf(System.Environment.GetCommandLineArgs(), "--cvr-dbg-pathdump") >= 0;
+        private static readonly System.Text.StringBuilder pathDump = new System.Text.StringBuilder();
+        private static string DbgState = "";
 
-        private static void RecordPath(Vector3 target, Vector3 eye, float scale, float maxSpeedUnits)
+        private static void RecordPath(Vector3 raw, Vector3 eye, float scale, Body body)
         {
-            if (!pathHas) { pathHas = true; pathLastTarget = target; pathLastEye = eye; pathStartY = eye.y / scale; return; }
+            if (!pathHas) { pathHas = true; pathLastRaw = raw; pathLastEye = eye; pathStartY = eye.y / scale; return; }
             float s = 1f / Mathf.Max(scale, 1e-3f), dt = Mathf.Max(Time.unscaledDeltaTime, 1e-4f);
-            // Velocities (m/s), so uneven frame times are not counted as uneven motion; only frames at steady top speed
-            // (target over 80 % of the character's cap), so speeding up and slowing down are not counted either.
-            float tv = Mathf.Abs(target.x - pathLastTarget.x) * s / dt, ev = Mathf.Abs(eye.x - pathLastEye.x) * s / dt;
-            float edy = (eye.y - pathLastEye.y) * s;
-            if (tv > 0.8f * maxSpeedUnits * s || (ev > 0.8f * maxSpeedUnits * s && tv < 1e-3f))
+            float rv = Mathf.Abs(raw.x - pathLastRaw.x) * s / dt, ev = Mathf.Abs(eye.x - pathLastEye.x) * s / dt;
+            float bodyV = body.rb != null ? Mathf.Abs(body.rb.velocity.x) : 0f;
+            if (bodyV * s > 0.3f) { pathMovingFrames++; pathMovingSpeed += ev; }
+            if (bodyV > 0.8f * body.actualMaxSpeed && body.actualMaxSpeed > 0f)
             {
-                pathMoving++;
+                pathSteady++;
+                pathRawSum += rv; pathRawSq += rv * rv;
                 pathEyeSum += ev; pathEyeSq += ev * ev;
-                pathTargetSum += tv; pathTargetSq += tv * tv;
-                if (tv < 1e-3f) pathTargetStalls++;
+                if (rv < 1e-3f) pathRawStalls++;
+                if (DbgPathDump && pathDump.Length < 2500) pathDump.Append($"{rv:F1}/{bodyV * s:F1}/{dt * 1000f:F0}/{(Time.fixedTime != pathLastFixed ? "s" : "-")}/{(eye.y - pathLastEye.y) * s * 100f:F1}/{DbgState} ");
             }
+            pathLastFixed = Time.fixedTime;
+            float edy = (eye.y - pathLastEye.y) * s;
             pathMaxDy = Mathf.Max(pathMaxDy, Mathf.Abs(edy));
             pathVertTravel += Mathf.Abs(edy);
+            // Up and down while on the ground: bob and sway, without the tunnel's drops and the jumps.
+            if (body.grounded && body.rb != null && Mathf.Abs(body.rb.velocity.y) < 1f) pathGroundTravel += Mathf.Abs(edy);
             pathEndY = eye.y * s;
-            pathLastTarget = target;
+            pathLastRaw = raw;
             pathLastEye = eye;
         }
 
@@ -264,11 +375,14 @@ namespace CasualtyVR
                 double mean = sum / n, sd = System.Math.Sqrt(System.Math.Max(0, sq / n - mean * mean));
                 return (sd / mean).ToString("F2");
             }
-            string r = $"steady-speed {pathMoving} frames, speed CV eye {Cv(pathEyeSum, pathEyeSq, pathMoving)} target {Cv(pathTargetSum, pathTargetSq, pathMoving)}, " +
-                       $"target stalled {pathTargetStalls}/{pathMoving}, vertical max step {pathMaxDy * 100f:F1} cm, travel {pathVertTravel * 100f:F0} cm, net {(pathEndY - pathStartY) * 100f:F0} cm";
-            pathMoving = pathTargetStalls = 0;
-            pathEyeSum = pathEyeSq = pathTargetSum = pathTargetSq = 0;
-            pathMaxDy = pathVertTravel = 0f;
+            string speed = pathMovingFrames > 0 ? $"{pathMovingSpeed / pathMovingFrames:F2} m/s" : "-";
+            string r = $"moving {pathMovingFrames} frames at {speed}; steady-speed {pathSteady} frames, speed CV raw {Cv(pathRawSum, pathRawSq, pathSteady)} " +
+                       $"eye {Cv(pathEyeSum, pathEyeSq, pathSteady)}, raw stalled {pathRawStalls}/{pathSteady}, " +
+                       $"vertical max step {pathMaxDy * 100f:F1} cm, travel {pathVertTravel * 100f:F0} cm (on the ground {pathGroundTravel * 100f:F0} cm), net {(pathEndY - pathStartY) * 100f:F0} cm";
+            if (pathDump.Length > 0) { r += " | dump " + pathDump; pathDump.Clear(); }
+            pathSteady = pathRawStalls = pathMovingFrames = 0;
+            pathRawSum = pathRawSq = pathEyeSum = pathEyeSq = pathMovingSpeed = 0;
+            pathMaxDy = pathVertTravel = pathGroundTravel = 0f;
             pathStartY = pathEndY;
             return r;
         }
@@ -285,6 +399,7 @@ namespace CasualtyVR
             menuOpenForInput = menuOpen;
             var body = PlayerCamera.main != null ? PlayerCamera.main.body : null;
             if (Plugin.FpBillboards.Value) billboards.Update(VrSpace.HeadPosition, body);
+            UpdateWallFade();
             UpdateFog();
             PinLook(body, menuOpen);
         }
@@ -323,8 +438,14 @@ namespace CasualtyVR
         {
             private static void Postfix(Body __instance, ref float __result)
             {
-                if (Active && PlayerCamera.main != null && __instance == PlayerCamera.main.body)
-                    __result *= Mathf.Clamp(Plugin.FpMoveSpeed.Value, 0.3f, 1f);
+                if (!Active || PlayerCamera.main == null || __instance != PlayerCamera.main.body) return;
+                __result *= Mathf.Clamp(Plugin.FpMoveSpeed.Value, 0.3f, 1f);
+                // Analog walking (FP 8a): a part-way push of the stick walks at a real walking speed (Meta: about 1.4 m/s).
+                if (Walking && Plugin.FpAnalogWalk.Value)
+                {
+                    float s = CurrentScale;
+                    if (s > 0f) __result = Mathf.Min(__result, Plugin.FpWalkSpeed.Value * s);
+                }
             }
         }
 
@@ -433,10 +554,40 @@ namespace CasualtyVR
             vignette = Mathf.MoveTowards(vignette, v, Time.unscaledDeltaTime * 3f);
         }
 
+        /// <summary>
+        /// Head inside a wall (FP 8c, IP 11): the view fades to black while the head is inside a solid block or past the
+        /// tunnel's sides (leaning into a wall showed what is behind it). 5 cm of leeway at the sides; in 0.12 s, out in 0.2 s.
+        /// </summary>
+        private void UpdateWallFade()
+        {
+            bool inside = false;
+            var world = WorldGeneration.world;
+            if (Plugin.FpWallFade.Value && world != null && !world.generatingWorld)
+            {
+                if (seeThrough == null)
+                {
+                    seeThrough = new HashSet<int>();
+                    foreach (var id in Plugin.SeeThroughBlocks.Value.Split(','))
+                        if (int.TryParse(id.Trim(), out int n)) seeThrough.Add(n);
+                }
+                Vector3 h = VrSpace.HeadPosition;
+                float pad = 0.05f * VrSpace.Scale;
+                int block = world.GetBlock((Vector2)h);
+                inside = h.z < VoxelTerrain.FrontZ - pad || h.z > VoxelTerrain.BackZ + pad || (block != 0 && !seeThrough.Contains(block));
+            }
+            if (inside != headInWall)
+            {
+                headInWall = inside;
+                if (Plugin.Verbose) Plugin.Log.LogInfo($"First person: head {(inside ? "inside a wall, fading out" : "back in the open")} (head {VrSpace.HeadPosition}, tunnel z {VoxelTerrain.FrontZ:F2}..{VoxelTerrain.BackZ:F2})");
+            }
+            wallFade = Mathf.MoveTowards(wallFade, inside ? 1f : 0f, Time.unscaledDeltaTime / (inside ? 0.12f : 0.2f));
+        }
+
         /// <summary>Darkening overlays for an eye (call inside VrUi.DrawInto); returns the number of draws.</summary>
         public static int DrawOverlay(CommandBuffer cmd, Camera eye)
         {
-            if (!Active || (blackout <= 0.001f && vignette <= 0.001f)) return 0;
+            float black = Mathf.Max(blackout, Mathf.Max(wallFade, blink));
+            if (!Active || (black <= 0.001f && vignette <= 0.001f)) return 0;
             if (overlayMat == null)
             {
                 overlayMat = new Material(Shader.Find("Sprites/Default")) { name = "CasualtyVR.FpOverlay" };
@@ -469,10 +620,10 @@ namespace CasualtyVR
                 cmd.DrawMesh(overlayQuad, m, overlayMat, 0, 0, props);
                 drawn++;
             }
-            if (blackout > 0.001f)
+            if (black > 0.001f)
             {
                 props.SetTexture("_MainTex", Texture2D.whiteTexture);
-                props.SetColor("_Color", new Color(0f, 0f, 0f, blackout));
+                props.SetColor("_Color", new Color(0f, 0f, 0f, black));
                 cmd.DrawMesh(overlayQuad, m, overlayMat, 0, 0, props);
                 drawn++;
             }
@@ -512,8 +663,15 @@ namespace CasualtyVR
             if (measuredEyeUnits > 0f || !body.standing || !body.grounded || body.crouching || body.col == null) return;
             float h = body.limbs[0].transform.position.y - body.col.bounds.min.y;
             if (h < 0.5f || h > 10f) return;
+            float before = Scale;
+            // The measure catches the idle sway at any point (4.87-5.01 blocks in tests): a remembered height within 8 % is
+            // kept, so the world does not resize by a few percent a moment after spawn.
+            float remembered = Plugin.FpEyeUnits.Value;
+            if (remembered > 0.5f && Mathf.Abs(h - remembered) < 0.08f * remembered) h = remembered;
             measuredEyeUnits = h;
-            Plugin.Log.LogInfo($"First person: character eye height {h:F2} units (collider {body.col.bounds.size.y:F2} tall) -> {Scale:F2} units/m");
+            Plugin.Log.LogInfo($"First person: character eye height {h:F2} units (collider {body.col.bounds.size.y:F2} tall) -> {Scale:F2} units/m (was {before:F2})");
+            // Remembered for the next run, so the scale is right from the first frame (FP 8g).
+            if (Mathf.Abs(Plugin.FpEyeUnits.Value - h) > 0.01f * h) Plugin.FpEyeUnits.Value = (float)System.Math.Round(h, 3);
         }
 
         private void Refresh(Body body)
@@ -540,7 +698,7 @@ namespace CasualtyVR
             foreach (var s in staleWall) { if (frontWall[s] != null) Object.Destroy(frontWall[s].gameObject); frontWall.Remove(s); }
             float z = VoxelTerrain.FrontZ - 0.02f;
             // The walls never move: full refresh twice a second; otherwise only near ones are shown (perf, 2026-10-06).
-            bool full = Time.frameCount - lastWallRefresh >= 30;
+            bool full = Scans.Due(lastWallRefresh, 30, 18);
             if (full) lastWallRefresh = Time.frameCount;
             Vector2 eyeXY = eye;
             float near = Plugin.FpViewDistance.Value + 20f;
@@ -588,8 +746,9 @@ namespace CasualtyVR
 
         private void UpdateTileMirrors()
         {
-            if (Time.frameCount - lastTileScan >= 120)
+            if (Scans.Due(lastTileScan, 120, 4))
             {
+                long t0 = Scans.Start();
                 lastTileScan = Time.frameCount;
                 var dead = new List<Tilemap>();
                 foreach (var kv in tileMirrors) if (kv.Key == null) { dead.Add(kv.Key); if (kv.Value != null) Object.Destroy(kv.Value); }
@@ -601,6 +760,7 @@ namespace CasualtyVR
                     if (tm == null || tileMirrors.ContainsKey(tm)) continue;
                     tileMirrors[tm] = MirrorTilemap(tm, tr);
                 }
+                Scans.Stop("fp tiles", t0);
             }
             float z = VoxelTerrain.FrontZ - 0.02f;
             foreach (var kv in tileMirrors)
@@ -648,8 +808,9 @@ namespace CasualtyVR
 
         private void UpdateBackProxies()
         {
-            if (Time.frameCount - lastBackScan >= 30)
+            if (Scans.Due(lastBackScan, 30, 22))
             {
+                long t0 = Scans.Start();
                 lastBackScan = Time.frameCount;
                 var found = new HashSet<SpriteRenderer>();
                 // They all carry a Collider2D: a spatial query around the view, not every sprite in the world
@@ -687,6 +848,7 @@ namespace CasualtyVR
                     cp.receiveShadows = false;
                     backProxies[sr] = cp;
                 }
+                Scans.Stop("fp back wall", t0);
             }
             float z = VoxelTerrain.BackZ - 0.05f * PopupDepth.Scale;
             Vector2 eyeXY = eye;
@@ -819,8 +981,9 @@ namespace CasualtyVR
         private void FaceLights(Transform eye)
         {
             Vector3 eyePos = eye.position;
-            if (Time.frameCount - lastLightScan >= 60)
+            if (Scans.Due(lastLightScan, 60, 58))
             {
+                long t0 = Scans.Start();
                 lastLightScan = Time.frameCount;
                 lights.Clear();
                 physicsLights.Clear();
@@ -855,6 +1018,7 @@ namespace CasualtyVR
                     }
                 }
                 if (Plugin.Verbose && lastLightLog++ % 20 == 0) Plugin.Log.LogInfo($"First person: {lights.Count} lights face the eye, {skipped} on physics objects left as they are");
+                Scans.Stop("fp lights", t0);
             }
             // Lights on physics objects cannot be turned (moving them would make Physics2D resync), and edge-on
             // in the play plane their mesh lights everything on one side of it: half the view (the "brightness
@@ -1002,7 +1166,7 @@ namespace CasualtyVR
             bodyView.Destroy();
             foreach (var (go, mat) in fogSheets) { Object.Destroy(go); Object.Destroy(mat); }
             fogSheets.Clear();
-            blackout = vignette = 0f;
+            blackout = vignette = wallFade = blink = 0f;
             if (proxyRoot != null) Object.Destroy(proxyRoot);
             lightProxies.Clear();
             frontWall.Clear();

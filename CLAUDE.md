@@ -23,6 +23,9 @@ Machine-specific notes, if any, are in `CLAUDE.local.md` (not in git).
 - **Build order: docs/BUILD_PLAN.md** (phases 0–8; merges IMPROVEMENT_PLAN, FIRSTPERSON_REVIEW, VRMENU_REVIEW).
   - Phase 1, the VR settings menu on its own panel: docs/PHASE1_RECEIPT.md, test `tools/vr-menu.ps1` (flags `--cvr-dbg-settings <tab|all>`,
     `--cvr-dbg-settings-more`, `--cvr-dbg-menu-aim` logs xr-sim `hand r point` angles for a few controls).
+  - Phase 2, first-person comfort (walk/run, wall fade, steady height, presets, scan staggering in `Scans.cs`): docs/PHASE2_RECEIPT.md,
+    tests `tools/fp-comfort.ps1` and `tools/fp-path.ps1 [-Preset Moderate] [-Extra --cvr-dbg-nofilter]`; flags `--cvr-dbg-preset <name>`,
+    `--cvr-dbg-pathdump` (per-frame eye path). Verbose perf adds `perf: scans (slowest ms)`: match the main perf line with `perf: .* fwd`.
 - Review plan: docs/IMPROVEMENT_PLAN.md (groups A–E). Group A (input/session lifecycle, recenter heading, fault isolation,
   bridge log `BepInEx/CasualtyVR-bridge.log`): docs/LIFECYCLE_RECEIPT.md, test `tools/vr-lifecycle.ps1` (xr-sim session states,
   focus, validity; flags `--cvr-dbg-recenter <s>`, `--cvr-dbg-throw <s>`). Read the Unity player log in tests, not LogOutput.log (buffered).

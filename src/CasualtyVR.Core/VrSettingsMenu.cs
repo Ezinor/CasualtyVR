@@ -681,12 +681,29 @@ namespace CasualtyVR
             switch (name)
             {
                 case "Comfort":
+                    // First-person comfort (docs/FIRSTPERSON_REVIEW.md FP-8): the preset sets the rows below it and those
+                    // under More settings; changing any of them makes it your own mix (no preset lit).
+                    list.Add(new Row
+                    {
+                        Kind = Kind.Choice, Label = "Comfort preset", NoReset = true,
+                        Desc = "Sets the comfort options at once. Intense: the game moves you as it moves the character. Moderate: snap blink, steady eye height, a light fall vignette. Gentle: also the diorama while knocked down, running at about 4 m/s and snap turning.",
+                        Options = ComfortPresets.Names, GetIndex = ComfortPresets.Current, SetIndex = i => ComfortPresets.Apply(ComfortPresets.Names[i]),
+                    });
                     list.Add(Choice("Turning", Plugin.FpTurning, ("Snap", "Snap"), ("Smooth", "Smooth")));
-                    list.Add(Slider("Smooth turn speed", Plugin.FpTurnSpeed, 30f, 360f, 15f, v => $"{v:F0}°/s", active: () => Plugin.FpTurning.Value == "Smooth"));
-                    list.Add(Slider("Running speed", Plugin.FpMoveSpeed, 0.5f, 1f, 0.05f, v => $"{v * 100f:F0}%"));
+                    list.Add(new Row
+                    {
+                        Kind = Kind.Slider, Label = "Running speed", Entries = new ConfigEntryBase[] { Plugin.FpMoveSpeed },
+                        Desc = "How fast you run in first person, with the stick pushed all the way (a real run is about 3 m/s). The flat game and the diorama keep the game's own speed.",
+                        Min = 0.5f, Max = 1f, Step = 0.05f, Get = () => Plugin.FpMoveSpeed.Value, Set = v => Plugin.FpMoveSpeed.Value = v, Format = RunSpeedText,
+                    });
+                    list.Add(OptSlider("Walk on a half push", Plugin.FpAnalogWalk, Plugin.FpWalkSpeed, 0.8f, 3f, 0.1f, v => $"{v:F1} m/s"));
                     list.Add(Slider("Fall vignette", Plugin.FpVignette, 0f, 1f, 0.1f, v => v <= 0f ? "Off" : $"{v * 100f:F0}%"));
                     list.Add(Choice("When knocked down", Plugin.FpRagdollView, ("Stay", "Stay in 1st person"), ("Diorama", "Diorama")));
                     list.Add(Switch("Blackout when unconscious", Plugin.FpBlackout));
+                    list.Add(Switch("Steady eye height", Plugin.FpSteadyHeight, more: true));
+                    list.Add(Switch("Snap blink", Plugin.FpSnapBlink, more: true));
+                    list.Add(Switch("Fade inside walls", Plugin.FpWallFade, more: true));
+                    list.Add(Slider("Smooth turn speed", Plugin.FpTurnSpeed, 30f, 360f, 15f, v => $"{v:F0}°/s", more: true, active: () => Plugin.FpTurning.Value == "Smooth"));
                     list.Add(Slider("Camera smoothing", Plugin.FpSmoothing, 0f, 1f, 0.1f, v => $"{v * 100f:F0}%", more: true));
                     break;
                 case "View":
@@ -837,6 +854,15 @@ namespace CasualtyVR
 
         private static ConfigEntry<float> FogEntry() => Plugin.FogMode.Value == "Haze" ? Plugin.FogHaze : Plugin.FogMist;
 
+        /// <summary>Running speed in metres per second (FP 8b), once the first-person scale is known; else the fraction.</summary>
+        private static string RunSpeedText(float fraction)
+        {
+            var body = PlayerCamera.main != null ? PlayerCamera.main.body : null;
+            float scale = FirstPerson.ScaleEstimate;
+            if (body == null || scale <= 0f || body.maxSpeed <= 0f) return $"{fraction * 100f:F0}%";
+            return $"{body.maxSpeed * fraction / scale:F1} m/s";
+        }
+
         private static string ControlLabel(string control)
         {
             switch (control)
@@ -985,6 +1011,7 @@ namespace CasualtyVR
             Add("segment Snap", "Body/Row Turning/Button Snap");
             Add("slider Fall vignette 0.2", "Body/Row Fall vignette/Slider", 0.2f);
             Add("slider Fall vignette 0.8", "Body/Row Fall vignette/Slider", 0.8f);
+            Add("segment Moderate", "Body/Row Comfort preset/Button Moderate");
             Add("more", "Button More settings");
             var c = new Vector3[4];
             foreach (var (name, t, fx) in targets)

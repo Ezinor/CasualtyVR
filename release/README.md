@@ -1,4 +1,4 @@
-# CasualtyVR 1.3.0-test1
+# CasualtyVR 1.3.0-test2
 
 A VR mod for **Casualties: Unknown** (Demo, game version 7.0.1). It shows the game as a 3D diorama in front of
 you: the terrain becomes solid blocks, liquids fill their tunnels, and characters and objects get real depth.
@@ -102,7 +102,8 @@ looking along the tunnels. Menus, loading screens and the death screen still use
 
 | Control | Action |
 |---|---|
-| Left stick forward/back | Walk the way you face |
+| Left stick forward/back, part way | Walk the way you face (1.4 m/s) |
+| Left stick forward/back, all the way | Run (6.5 m/s by default) |
 | Right stick up/down | Climb / crouch |
 | Right stick flick sideways | Turn around (or smooth turning, in the settings) |
 | A | Jump |
@@ -133,11 +134,18 @@ finger) is exactly where it acts.
 **Settings**
 
 - *Comfort* tab:
-  - *Turning*: *Snap* (flick to turn around) or *Smooth*, at 30 to 360 degrees a second.
-  - *Running speed*: how fast your character runs in first person (80% of the game's speed by default; the flat
-    game and the diorama always use the game's own speed).
+  - *Comfort preset*: **Intense** (the default: the camera moves as the character does), **Moderate** (snap blink,
+    steady eye height, a light fall vignette) or **Gentle** (also the diorama while knocked down, running at about
+    4 m/s, snap turning). Changing any of the settings below makes it your own mix.
+  - *Turning*: *Snap* (flick to turn around) or *Smooth*.
+  - *Running speed*, in metres per second: how fast your character runs in first person (6.5 m/s by default; the
+    flat game and the diorama always use the game's own speed).
+  - *Walk on a half push*: the left stick part way walks at this speed (1.4 m/s, a real walk), all the way runs.
   - Fall vignette, *When knocked down* (stay in first person, or switch to the diorama), blackout when
-    unconscious; camera smoothing under *More settings*.
+    unconscious.
+  - Under *More settings*: *Steady eye height* (no sway or bob from the character's animation; steps glide), *Snap
+    blink*, *Fade inside walls* (on by default: the view fades to black while your head is in a block or leaning
+    out of the tunnel), the smooth-turn speed and camera smoothing.
 - *First person* tab:
   - Tunnel sides: cave walls, or a void that darkens with distance.
   - Characters and objects facing you.
