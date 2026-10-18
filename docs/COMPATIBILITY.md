@@ -73,8 +73,8 @@ The user's first co-op test with 1.2.1 (HEADSET) found three problems:
 - name tags sat under the players in first person;
 - the alt-tab icon showed sideways in first person.
 
-1.2.2 addresses all three, generically, in [IMGUI_RECEIPT.md](IMGUI_RECEIPT.md). It is verified headless with a
-stand-in window and a cloned character, but not yet with the co-op mod itself.
+1.2.2 addresses all three, generically, in [IMGUI_RECEIPT.md](IMGUI_RECEIPT.md). The user confirmed it in co-op in
+the headset on 2026-10-18 (HEADSET).
 
 | Finding | Effect in VR | Grade |
 |---|---|---|

@@ -99,11 +99,13 @@ Collider2D is touched.
 | `tools/fp-smoke.ps1` | **11/11** (on this code before the version bump) |
 | Cost A/B (heading view, 2 runs each) | Capture on: 82.4 / 82.1 fps. Off: 82.2 / 65.4 fps. The difference between runs is larger than any difference between on and off: no measurable cost |
 
-## Not verified
+## Headset
 
-- **With the co-op mod itself.** Its windows were never loaded here: the dev copy has no co-op mod, and it needs
-  Steam. The stand-in is a GUI.Window with GUILayout, which is what IMGUI windows are.
+**2026-10-18:** the user tested 1.2.2 in co-op (Casualties Together) in the headset and reports that it works
+(grade HEADSET). This covers the reported problems: the co-op windows in VR, with the laser, and the first-person
+name tags and icons.
+
+## Still open
+
 - **IMGUI behaviours at a GUI.depth beyond ±2^28** would draw outside the capture. None were seen.
-- **The window not focused.** Posted mouse messages worked in the headless runs; the real case is VR with the
-  monitor window not focused, which still needs a headset pass.
 - **Typing:** chat still needs the keyboard (the laser has no text input).
