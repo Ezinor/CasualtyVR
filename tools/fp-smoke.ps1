@@ -10,6 +10,7 @@
 #   mouth        holding a bottle at the mouth -> used (drink), with a vibration pulse accepted by the runtime
 #   touch        keypad minigame: the hand on the panel moves the mouse (centre, right)
 #   swing        fast right-hand swings in a cave -> swing attacks
+#   swing-gate   (Phase 4a) the grip pose is located; swings with a pistol in hand do not fire it, with a machete they attack
 #   lockpick     lockpicking by hand: the fingertip is the click point; touching the ring + trigger engages the pick
 [CmdletBinding()]
 param([string[]]$Only = @())
@@ -26,7 +27,16 @@ function Stop-Game { Get-Process CasualtiesUnknown -ErrorAction SilentlyContinue
 function Start-Game([string[]]$extra, [string]$readyPattern) {
     Stop-Game
     $args2 = @("--cvr-vr", "--cvr-autostart", "--cvr-seed", "1234", "--cvr-dbg-fp") + $extra
+    $started = Get-Date
     & (Join-Path $root "tools\launch-dev.ps1") -Windowed -XrSim -NoWait @args2 | Out-Null
+    # Read this run's Unity player log (it carries the BepInEx lines too): LogOutput.log is buffered, so a line can be
+    # missing when a check reads it (chest-store failed that way, 2026-10-23), and it holds the last run until BepInEx starts.
+    $deadline = (Get-Date).AddSeconds(20)
+    do {
+        Start-Sleep -Milliseconds 300
+        $newest = Get-ChildItem (Join-Path $root "Working\game-dev\CasualtyVR_Logs\Player-*.log") | Where-Object { $_.CreationTime -ge $started.AddSeconds(-2) } | Sort-Object CreationTime | Select-Object -Last 1
+    } while ($null -eq $newest -and (Get-Date) -lt $deadline)
+    if ($newest) { $script:log = $newest.FullName }
     $deadline = (Get-Date).AddSeconds(150)
     while ((Get-Date) -lt $deadline) { Start-Sleep 3; if (Has $readyPattern) { break } }
     Start-Sleep 4
@@ -51,6 +61,7 @@ if (Want "grab-throw") {
     C @("hand r offset 0.2 0 -0.4"); Start-Sleep -Milliseconds 500
     C @("hand r offset 0.7 0 -0.1", "grip r 0"); Start-Sleep -Milliseconds 800
     Check "grab-throw: throw" (Has "let go of .* -> throw") "Grab: let go of ... -> throw"
+    Check "grab-throw: thrown from the hand at its peak speed" (Has "Grab: threw .* \(peak over 150 ms\)") ((Select-String -Path $log -Pattern "Grab: threw" | Select-Object -Last 1).Line)
 }
 
 if (Want "chest-store") {
@@ -90,6 +101,20 @@ if (Want "swing") {
     foreach ($i in 1..3) { C @("hand r offset 0.2 0.2 0.0"); Start-Sleep -Milliseconds 700; C @("hand r offset 0.6 0.0 -0.3"); Start-Sleep -Milliseconds 700 }
     Start-Sleep 1
     Check "swing: attack" (Has "Grab: swing attack") "Grab: swing attack ..."
+}
+
+if (Want "swing-gate") {
+    # Phase 4a (FAIL-HAND-006): a swing with a gun in hand must not fire it (the attack key uses it); with a melee tool
+    # it attacks. The grip pose is located (bridge log) and throws start from the hand.
+    Start-Game @("--cvr-dbg-cave", "--cvr-dbg-spawn", "pistol", "--cvr-dbg-hold") "put in hand slot"
+    Check "grip pose: located" (Has "controller right: grip pose located") "[bridge] controller right: grip pose located"
+    foreach ($i in 1..3) { C @("hand r offset 0.2 0.2 0.0"); Start-Sleep -Milliseconds 700; C @("hand r offset 0.6 0.0 -0.3"); Start-Sleep -Milliseconds 700 }
+    Start-Sleep 1
+    Check "swing-gate: a gun is not swung" ((Has "swing not used with pistol") -and -not (Has "Grab: swing attack")) "Grab: swing not used with pistol..., no swing attack"
+    Start-Game @("--cvr-dbg-cave", "--cvr-dbg-spawn", "machete", "--cvr-dbg-hold") "put in hand slot"
+    foreach ($i in 1..3) { C @("hand r offset 0.2 0.2 0.0"); Start-Sleep -Milliseconds 700; C @("hand r offset 0.6 0.0 -0.3"); Start-Sleep -Milliseconds 700 }
+    Start-Sleep 1
+    Check "swing-gate: a machete swings" (Has "Grab: swing attack") ((Select-String -Path $log -Pattern "Grab: swing attack" | Select-Object -Last 1).Line)
 }
 
 if (Want "lockpick") {

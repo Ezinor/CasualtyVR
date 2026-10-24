@@ -142,7 +142,10 @@ namespace CasualtyVR
             int drawn = 0;
             for (int h = 0; h < 2; h++)
             {
-                if (!VrInput.HandPose(h, out Vector3 pos, out Vector3 forward, out float trigger, out float grip)) continue;
+                if (!VrInput.HandPose(h, out _, out _, out float trigger, out float grip)) continue;
+                // The hand art follows the grip pose (Phase 4a): the forearm along the controller's handle.
+                if (!VrInput.GripPose(h, out Vector3 pos, out Quaternion gripRot)) continue;
+                Vector3 forward = gripRot * Vector3.forward;
                 // Three clearly different poses: open hand at rest, pressing finger on the trigger, fist on the grip.
                 Sprite sp = grip > 0.5f ? mb.handSprites[2] : trigger > 0.5f ? mb.handSprites[5] : mb.handSprites[0];
                 if (sp == null) continue;

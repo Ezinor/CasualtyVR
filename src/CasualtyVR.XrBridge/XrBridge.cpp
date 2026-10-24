@@ -94,10 +94,11 @@ namespace
         XrActionSet actionSet = XR_NULL_HANDLE;
         // One action per hand and control (no subaction paths): valid everywhere, and xr-sim keeps a
         // single binding per action, so shared left/right actions read the wrong hand there.
-        XrAction aAim[2] = {}, aTrigger[2] = {}, aSqueeze[2] = {}, aStick[2] = {}, aStickClick[2] = {}, aHaptic[2] = {};
+        XrAction aAim[2] = {}, aGrip[2] = {}, aTrigger[2] = {}, aSqueeze[2] = {}, aStick[2] = {}, aStickClick[2] = {}, aHaptic[2] = {};
         XrAction aA = XR_NULL_HANDLE, aB = XR_NULL_HANDLE, aX = XR_NULL_HANDLE, aY = XR_NULL_HANDLE, aMenu = XR_NULL_HANDLE;
         XrPath handPath[2] = {XR_NULL_PATH, XR_NULL_PATH};
         XrSpace aimSpace[2] = {XR_NULL_HANDLE, XR_NULL_HANDLE};
+        XrSpace gripSpace[2] = {XR_NULL_HANDLE, XR_NULL_HANDLE};
         CvrInput input{};
         XrSessionState sessionState = XR_SESSION_STATE_UNKNOWN;
         bool sessionRunning = false;
@@ -124,6 +125,8 @@ namespace
         bool hasHand[2] = {false, false};
         XrPosef lastHand[2]{};
         double lastHandMs[2] = {0, 0};
+        bool hasGrip[2] = {false, false};
+        XrPosef lastGrip[2]{};
         bool adapterMismatch = false;   // the runtime's adapter LUID differs from the game device's
 
         // Frame handed from wait (main thread) to submit (render path).
@@ -469,6 +472,8 @@ namespace
             char n[64], l[64];
             sprintf_s(n, "aim_%s", side[h]); sprintf_s(l, "Aim %s", side[h]);
             g->aAim[h] = MakeAction(n, l, XR_ACTION_TYPE_POSE_INPUT);
+            sprintf_s(n, "grip_%s", side[h]); sprintf_s(l, "Grip pose %s", side[h]);
+            g->aGrip[h] = MakeAction(n, l, XR_ACTION_TYPE_POSE_INPUT);
             sprintf_s(n, "trigger_%s", side[h]); sprintf_s(l, "Trigger %s", side[h]);
             g->aTrigger[h] = MakeAction(n, l, XR_ACTION_TYPE_FLOAT_INPUT);
             sprintf_s(n, "squeeze_%s", side[h]); sprintf_s(l, "Grip %s", side[h]);
@@ -493,6 +498,7 @@ namespace
         // (they can be re-assigned to other game actions in VR settings > Controls).
         any |= Suggest("/interaction_profiles/khr/simple_controller", {
             {g->aAim[0], "/user/hand/left/input/aim/pose"}, {g->aAim[1], "/user/hand/right/input/aim/pose"},
+            {g->aGrip[0], "/user/hand/left/input/grip/pose"}, {g->aGrip[1], "/user/hand/right/input/grip/pose"},
             {g->aTrigger[0], "/user/hand/left/input/select/click"}, {g->aTrigger[1], "/user/hand/right/input/select/click"},
             {g->aMenu, "/user/hand/left/input/menu/click"},
         });
@@ -500,6 +506,7 @@ namespace
         // the pause menu; the left pad click stays the left stick click.
         any |= Suggest("/interaction_profiles/htc/vive_controller", {
             {g->aAim[0], "/user/hand/left/input/aim/pose"}, {g->aAim[1], "/user/hand/right/input/aim/pose"},
+            {g->aGrip[0], "/user/hand/left/input/grip/pose"}, {g->aGrip[1], "/user/hand/right/input/grip/pose"},
             {g->aTrigger[0], "/user/hand/left/input/trigger/value"}, {g->aTrigger[1], "/user/hand/right/input/trigger/value"},
             {g->aSqueeze[0], "/user/hand/left/input/squeeze/click"}, {g->aSqueeze[1], "/user/hand/right/input/squeeze/click"},
             {g->aStick[0], "/user/hand/left/input/trackpad"}, {g->aStick[1], "/user/hand/right/input/trackpad"},
@@ -511,6 +518,7 @@ namespace
         // pad click = X, left menu = the pause menu.
         any |= Suggest("/interaction_profiles/microsoft/motion_controller", {
             {g->aAim[0], "/user/hand/left/input/aim/pose"}, {g->aAim[1], "/user/hand/right/input/aim/pose"},
+            {g->aGrip[0], "/user/hand/left/input/grip/pose"}, {g->aGrip[1], "/user/hand/right/input/grip/pose"},
             {g->aTrigger[0], "/user/hand/left/input/trigger/value"}, {g->aTrigger[1], "/user/hand/right/input/trigger/value"},
             {g->aSqueeze[0], "/user/hand/left/input/squeeze/click"}, {g->aSqueeze[1], "/user/hand/right/input/squeeze/click"},
             {g->aStick[0], "/user/hand/left/input/thumbstick"}, {g->aStick[1], "/user/hand/right/input/thumbstick"},
@@ -523,6 +531,7 @@ namespace
         // left trackpad is the pause menu.
         any |= Suggest("/interaction_profiles/valve/index_controller", {
             {g->aAim[0], "/user/hand/left/input/aim/pose"}, {g->aAim[1], "/user/hand/right/input/aim/pose"},
+            {g->aGrip[0], "/user/hand/left/input/grip/pose"}, {g->aGrip[1], "/user/hand/right/input/grip/pose"},
             {g->aTrigger[0], "/user/hand/left/input/trigger/value"}, {g->aTrigger[1], "/user/hand/right/input/trigger/value"},
             {g->aSqueeze[0], "/user/hand/left/input/squeeze/value"}, {g->aSqueeze[1], "/user/hand/right/input/squeeze/value"},
             {g->aStick[0], "/user/hand/left/input/thumbstick"}, {g->aStick[1], "/user/hand/right/input/thumbstick"},
@@ -536,6 +545,7 @@ namespace
         if (g->hpControllerExt)
             any |= Suggest("/interaction_profiles/hp/mixed_reality_controller", {
                 {g->aAim[0], "/user/hand/left/input/aim/pose"}, {g->aAim[1], "/user/hand/right/input/aim/pose"},
+                {g->aGrip[0], "/user/hand/left/input/grip/pose"}, {g->aGrip[1], "/user/hand/right/input/grip/pose"},
                 {g->aTrigger[0], "/user/hand/left/input/trigger/value"}, {g->aTrigger[1], "/user/hand/right/input/trigger/value"},
                 {g->aSqueeze[0], "/user/hand/left/input/squeeze/value"}, {g->aSqueeze[1], "/user/hand/right/input/squeeze/value"},
                 {g->aStick[0], "/user/hand/left/input/thumbstick"}, {g->aStick[1], "/user/hand/right/input/thumbstick"},
@@ -547,6 +557,7 @@ namespace
             });
         any |= Suggest("/interaction_profiles/oculus/touch_controller", {
             {g->aAim[0], "/user/hand/left/input/aim/pose"}, {g->aAim[1], "/user/hand/right/input/aim/pose"},
+            {g->aGrip[0], "/user/hand/left/input/grip/pose"}, {g->aGrip[1], "/user/hand/right/input/grip/pose"},
             {g->aTrigger[0], "/user/hand/left/input/trigger/value"}, {g->aTrigger[1], "/user/hand/right/input/trigger/value"},
             {g->aSqueeze[0], "/user/hand/left/input/squeeze/value"}, {g->aSqueeze[1], "/user/hand/right/input/squeeze/value"},
             {g->aStick[0], "/user/hand/left/input/thumbstick"}, {g->aStick[1], "/user/hand/right/input/thumbstick"},
@@ -565,6 +576,8 @@ namespace
             sci.subactionPath = XR_NULL_PATH;
             sci.poseInActionSpace.orientation.w = 1.0f;
             Check(xrCreateActionSpace(g->session, &sci, &g->aimSpace[h]), "xrCreateActionSpace");
+            sci.action = g->aGrip[h];
+            Check(xrCreateActionSpace(g->session, &sci, &g->gripSpace[h]), "xrCreateActionSpace (grip)");
         }
         XrSessionActionSetsAttachInfo ai{XR_TYPE_SESSION_ACTION_SETS_ATTACH_INFO};
         ai.countActionSets = 1;
@@ -651,6 +664,25 @@ namespace
                     {
                         hand.aimOrientation = {pose.orientation.x, pose.orientation.y, pose.orientation.z, pose.orientation.w};
                         hand.aimPosition = {pose.position.x, pose.position.y, pose.position.z};
+                    }
+                    // The grip pose, at the same time and with the same dropout hold as the aim pose.
+                    XrSpaceLocation gl{XR_TYPE_SPACE_LOCATION};
+                    bool gLocated = hand.poseValid && !hand.poseHeld && g->gripSpace[h] && XR_SUCCEEDED(xrLocateSpace(g->gripSpace[h], g->localSpace, displayTime, &gl))
+                                    && (gl.locationFlags & XR_SPACE_LOCATION_ORIENTATION_VALID_BIT) && (gl.locationFlags & XR_SPACE_LOCATION_POSITION_VALID_BIT);
+                    if (gLocated) { g->hasGrip[h] = true; g->lastGrip[h] = gl.pose; }
+                    if ((gLocated || (hand.poseHeld && g->hasGrip[h])))
+                    {
+                        const XrPosef& gp = gLocated ? gl.pose : g->lastGrip[h];
+                        hand.gripOrientation = {gp.orientation.x, gp.orientation.y, gp.orientation.z, gp.orientation.w};
+                        hand.gripPosition = {gp.position.x, gp.position.y, gp.position.z};
+                        hand.gripValid = 1;
+                    }
+                    static bool gripLogged[2] = {false, false};
+                    if (gLocated && !gripLogged[h])
+                    {
+                        gripLogged[h] = true;
+                        Log("controller %s: grip pose located (%.3f, %.3f, %.3f), aim (%.3f, %.3f, %.3f)", h == 0 ? "left" : "right",
+                            gl.pose.position.x, gl.pose.position.y, gl.pose.position.z, pose.position.x, pose.position.y, pose.position.z);
                     }
                     hand.active = act ? 1 : 0;
                     static float lastLogged[2] = {0, 0};
@@ -909,6 +941,8 @@ CVR_API void cvr_xr_shutdown()
     // XR-004: stop returns the process to its pre-start state.
     for (auto& space : g->aimSpace)
         if (space) xrDestroySpace(space);
+    for (auto& space : g->gripSpace)
+        if (space) { xrDestroySpace(space); space = XR_NULL_HANDLE; }
     if (g->actionSet) xrDestroyActionSet(g->actionSet);   // destroys its actions too
     for (auto& eye : g->eyes)
         if (eye.handle) xrDestroySwapchain(eye.handle);

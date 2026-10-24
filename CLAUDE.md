@@ -29,6 +29,9 @@ Machine-specific notes, if any, are in `CLAUDE.local.md` (not in git).
   - Phase 3, the menu in the game's look (`MenuArt.cs`: the game's uiBlock/uiBlockNano sprites, glow, tab icons, controller drawing),
     the Controls picture and the round pause button: docs/PHASE3_RECEIPT.md, `tools/vr-menu.ps1 -Only controls,pause`.
     `--cvr-dbg-uidump` (probe) lists the game's UI images and saves their sprites to `BepInEx/CasualtyVR/uidump`.
+  - Phase 4a, hands: grip pose in the bridge (`VrInput.GripPose`; rays stay on the aim pose), swing/throw recipes in `HandMotion.cs`,
+    motion takes (`--cvr-dbg-replay <folder|synthetic>`, `tools/motion-takes.ps1 [-Takes <dir>]`): docs/PHASE4A_RECEIPT.md.
+    fp-smoke `swing-gate` (`--cvr-dbg-spawn pistol|machete --cvr-dbg-hold`). fp-smoke reads the player log now.
 - Review plan: docs/IMPROVEMENT_PLAN.md (groups A–E). Group A (input/session lifecycle, recenter heading, fault isolation,
   bridge log `BepInEx/CasualtyVR-bridge.log`): docs/LIFECYCLE_RECEIPT.md, test `tools/vr-lifecycle.ps1` (xr-sim session states,
   focus, validity; flags `--cvr-dbg-recenter <s>`, `--cvr-dbg-throw <s>`). Read the Unity player log in tests, not LogOutput.log (buffered).

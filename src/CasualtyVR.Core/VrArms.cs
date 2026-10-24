@@ -87,7 +87,10 @@ namespace CasualtyVR
 
         private void Pose(Arm arm, int hand, float side)
         {
-            bool valid = VrInput.HandPose(hand, out Vector3 aimPos, out Vector3 aimFwd, out _, out _);
+            // The grip pose (Phase 4a): the hand, and what it holds, point along the controller's handle, as a held stick
+            // would; the aim pose (the laser) points tens of degrees higher on Touch.
+            bool valid = VrInput.GripPose(hand, out Vector3 aimPos, out Quaternion gripRot);
+            Vector3 aimFwd = gripRot * Vector3.forward;
             foreach (var seg in arm.Segs) foreach (var (_, cp) in seg.Parts) if (cp.enabled != valid) cp.enabled = valid;
             if (!valid) return;
 

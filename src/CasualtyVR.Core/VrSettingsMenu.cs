@@ -1014,6 +1014,15 @@ namespace CasualtyVR
                     list.Add(OptSlider("Your arms (thickness)", Plugin.FpArms, Plugin.FpArmThickness, 0.1f, 2f, 0.1f, v => $"{v:F1}×", more: true));
                     list.Add(OptSlider("Your body (thickness)", Plugin.FpBody, Plugin.FpBodyDepth, 0.2f, 2f, 0.1f, v => $"{v:F1}×", more: true));
                     list.Add(Slider("Body behind your eyes", Plugin.FpBodyBack, -0.2f, 1f, 0.05f, v => $"{v * 100f:F0} cm", more: true));
+                    // Motion takes (Phase 4a, FP 9f): real swings and throws recorded here, replayed headless against the recipes.
+                    list.Add(new Row
+                    {
+                        Kind = Kind.Choice, Label = "Record a motion take", More = true, NoReset = true,
+                        Desc = "Records 20 s of your hand motion for testing the swing and throw detection. Pick one: the menu closes, 5 ticks, then record. Swings: 5 sword swings. Throws: 5 throws (pick something up each time). Other: ordinary moves that should not attack (reaching, eating, looking around). A long buzz starts and ends it.",
+                        Options = MotionTakes.Labels,
+                        GetIndex = () => MotionTakes.Recording == null ? -1 : Array.FindIndex(MotionTakes.Labels, l => MotionTakes.Recording.StartsWith(l)),
+                        SetIndex = i => { MotionTakes.Start(MotionTakes.Labels[i]); Close(); },
+                    });
                     break;
                 case "Controls":
                     foreach (var kv in Plugin.ControlBinds)

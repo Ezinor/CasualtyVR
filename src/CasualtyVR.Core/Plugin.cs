@@ -16,7 +16,7 @@ namespace CasualtyVR
     public class Plugin : BaseUnityPlugin
     {
         public const string Guid = "casualtyvr.core";
-        public const string Version = "1.3.0-test7";
+        public const string Version = "1.3.0-test8";
         /// <summary>BepInEx needs a plain version number (test builds carry a suffix in Version).</summary>
         public const string NumericVersion = "1.3.0";
         /// <summary>The game version this release was tested with (Application.version).</summary>
@@ -265,6 +265,13 @@ namespace CasualtyVR
                 if (File.Exists(BridgeLogPath)) { if (File.Exists(prev)) File.Delete(prev); File.Move(BridgeLogPath, prev); }
             }
             catch (Exception e) { Log.LogWarning("Could not keep the previous bridge log: " + e.Message); }
+            // Headless test (Phase 4a, TEST-027): --cvr-dbg-replay <folder|synthetic> runs the swing and throw recipes over
+            // recorded motion takes and logs what they find (tools/motion-takes.ps1).
+            {
+                var a = Environment.GetCommandLineArgs();
+                int i = Array.IndexOf(a, "--cvr-dbg-replay");
+                if (i >= 0 && i + 1 < a.Length) try { MotionTakes.Replay(a[i + 1]); } catch (Exception e) { Log.LogError("Motion replay failed: " + e); }
+            }
             if (StartInVr.Value || Environment.GetCommandLineArgs().Contains("--cvr-vr"))
                 rig.StartVr();
         }

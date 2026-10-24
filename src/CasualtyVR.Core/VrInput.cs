@@ -81,6 +81,39 @@ namespace CasualtyVR
             return true;
         }
 
+        /// <summary>
+        /// Hand h's grip pose in world units (Phase 4a, FP 9a): where the hand holds things, forward along the controller's
+        /// handle. Arms, hands, held items and grabbing use it; the laser and aiming stay on the aim pose (playbook ch. 02,
+        /// "grip pose versus aim pose": on Touch they are tens of degrees apart). Falls back to the aim pose.
+        /// </summary>
+        public static bool GripPose(int h, out Vector3 pos, out Quaternion rot)
+        {
+            var hand = h == 0 ? lastInput.left : lastInput.right;
+            pos = Vector3.zero;
+            rot = Quaternion.identity;
+            if (!Enabled || lastInput.focused == 0 || hand.poseValid == 0) return false;
+            bool grip = hand.gripValid != 0;
+            pos = VrSpace.Point(VrSpace.ToUnity(grip ? hand.gripPosition : hand.aimPosition));
+            rot = VrSpace.Rot(VrSpace.ToUnity(grip ? hand.gripOrientation : hand.aimOrientation));
+            return true;
+        }
+
+        /// <summary>Hand h's grip pose in room space (Unity axes, metres), with the analog grip and trigger: hand motion
+        /// for throws, swings and recorded motion takes (playbook INPUT-010: room space, so walking is not a swing).</summary>
+        public static bool GripTracking(int h, out Vector3 roomPos, out Quaternion roomRot, out float grip, out float trigger)
+        {
+            var hand = h == 0 ? lastInput.left : lastInput.right;
+            bool g = hand.gripValid != 0;
+            roomPos = VrSpace.ToUnity(g ? hand.gripPosition : hand.aimPosition);
+            roomRot = VrSpace.ToUnity(g ? hand.gripOrientation : hand.aimOrientation);
+            grip = hand.squeeze;
+            trigger = hand.trigger;
+            return Enabled && lastInput.focused != 0 && hand.poseValid != 0;
+        }
+
+        /// <summary>Whether hand h's grip pose was located this frame (else GripPose is the aim pose).</summary>
+        public static bool HasGripPose(int h) => (h == 0 ? lastInput.left : lastInput.right).gripValid != 0;
+
         /// <summary>Hand h's aim position in room space (Unity axes, metres) and grip, for motion (playbook INPUT-010).</summary>
         public static bool HandTracking(int h, out Vector3 roomPos, out float grip)
         {

@@ -80,6 +80,11 @@ struct CvrHand
     float trigger, squeeze, stickX, stickY;
     int32_t stickClick;
     int32_t poseHeld;         // the pose is the last tracked one (dropout): no motion should be read from it
+    // Grip pose (Phase 4a, FP 9a; playbook ch. 02 "grip pose versus aim pose"): where the hand holds things, its -Z
+    // along the controller handle. Rays stay on the aim pose. gripValid 0 = not located: use the aim pose instead.
+    CvrQuat gripOrientation;
+    CvrVec3 gripPosition;
+    int32_t gripValid;
 };
 struct CvrInput
 {

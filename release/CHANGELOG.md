@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.3.0-test8 — 2026-10-23 (test build)
+
+**Hands in first person** (part one):
+
+- **Held items point along the controller's handle**, like a stick in your hand, instead of up the laser. Your
+  arms, hands and what they hold now follow where you hold the controller; the laser still points where it did.
+- **Swings:** one attack per swing, however long it lasts, and none when you pull your hand back or reach out
+  slowly. **A swing no longer fires a gun** (or places scrap or switches a light) in your hand: only bare hands and
+  melee tools swing. The game's own attack speed for each weapon applies.
+- **Throws:** they carry your flick (its fastest moment, not the slowing end), let go as you open your hand rather
+  than only when it is fully open, and start from your hand. A flick that throws no longer also attacks.
+- **Record a motion take** (VR settings, *Hands & body*, *More settings*): 20 s of your swings, throws or ordinary
+  moves, saved for testing the detection.
+
 ## 1.3.0-test7 — 2026-10-23 (test build)
 
 - **Tab names fit their tabs:** "First person", "Hands & body", "Menus & HUD" and "Passthrough" ran over their

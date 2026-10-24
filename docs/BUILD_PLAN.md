@@ -111,6 +111,10 @@ zoomed menus at most 40 degrees tall); test6 pass: tab names fitted in test7.
 
 ### Phase 4 — Hands (L; split into 4a and 4b if large)
 
+**4a built 2026-10-23, test build `1.3.0-test8`:** see [PHASE4A_RECEIPT.md](PHASE4A_RECEIPT.md). Swinging a gun did
+fire it (the attack key uses the held item's left-button action); swings are now gated by the game's own item data. The
+motion takes are recorded in the headset (*Hands & body › More settings*); generated takes stand in until then.
+
 | Work | From |
 |---|---|
 | **4a:** the OpenXR grip pose in the bridge; hands, arms, held items and throw velocity on it | FP 9a |

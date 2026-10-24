@@ -1,4 +1,4 @@
-# CasualtyVR 1.3.0-test7
+# CasualtyVR 1.3.0-test8
 
 A VR mod for **Casualties: Unknown** (Demo, game version 7.0.1). It shows the game as a 3D diorama in front of
 you: the terrain becomes solid blocks, liquids fill their tunnels, and characters and objects get real depth.
@@ -118,11 +118,11 @@ The right controller is the character's active hand, and the left is the other h
 | Grip near an item | Pick it up into that hand |
 | Grip near a crate, door or machine | Use it |
 | Grip near a rope or ladder, then pull down | Climb, hand over hand |
-| Let go (slowly / while moving) | Drop / throw, harder the faster your hand moves |
+| Let go (slowly / while moving) | Drop / throw, harder the faster your hand moves, from where your hand is |
 | Held item to your chest, let go | Store it in the inventory |
 | Empty hand to your chest, grip | Open the inventory (use it with the pointer) |
 | Food, drink or pills held to your mouth | Eat, drink or take them |
-| Fast swing of the right hand | Attack along the swing |
+| Fast swing of the right hand | Attack along the swing, once per swing (bare hands and melee tools; not with a gun) |
 | Trigger | Attack or use, aimed where your hand points |
 | Right grip with nothing in reach | The usual interact at the pointer |
 | Minigames | Shown within reach: touch them with your hand, click with the trigger |

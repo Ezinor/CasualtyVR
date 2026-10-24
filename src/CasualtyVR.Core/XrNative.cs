@@ -64,6 +64,9 @@ namespace CasualtyVR
             public float trigger, squeeze, stickX, stickY;
             public int stickClick;
             public int poseHeld;   // last tracked pose held through a short dropout: read no motion from it
+            public Quat gripOrientation;   // grip pose (Phase 4a): where the hand holds things, -Z along the handle
+            public Vec3 gripPosition;
+            public int gripValid;          // 0: not located, use the aim pose
         }
 
         [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Ansi)]
