@@ -59,16 +59,23 @@ namespace CasualtyVR
         private const float LabelX = 16f, LabelW = 380f, CtrlX = 404f, Btn = 72f;
         private const float CtrlW = RowW - CtrlX - Btn - 20f;     // control area, left of the reset button
 
-        // Colours. The game's own frames and glow come in Phase 3 (M3); these are its palette (VRMENU_REVIEW §2).
-        private static readonly Color PanelCol = new Color(0.035f, 0.045f, 0.085f, 1f);   // opaque: HUD banners showed through
-        private static readonly Color RowCol = new Color(1f, 1f, 1f, 0.045f), RowHover = new Color(0.55f, 0.65f, 1f, 0.16f);
-        private static readonly Color HeaderRowCol = new Color(0.45f, 0.55f, 1f, 0.10f);
+        // The game's look (Phase 3, VRMENU_REVIEW M3, V1): boxes and buttons are the game's own white outline sprites,
+        // tinted (MenuArt); the panel has the game's big frame and a soft glow; VrUi draws it additively over a dark
+        // see-through backing, as the game's screen is composited (black adds nothing, lines and text glow). Colours are
+        // its palette (§2): periwinkle lines and labels, white values, green for on, yellow for warnings.
+        private static readonly Color FrameCol = new Color(0.72f, 0.78f, 1f);              // the outer frame
+        private static readonly Color GlowCol = new Color(0.38f, 0.48f, 1f, 0.5f);
+        private static readonly Color RowCol = new Color(0.28f, 0.32f, 0.52f), RowHover = new Color(0.62f, 0.70f, 1f);   // row frames
+        private static readonly Color HeaderRowCol = new Color(0.09f, 0.12f, 0.28f);       // filled
         private static readonly Color LabelCol = new Color(0.76f, 0.81f, 1f);              // periwinkle labels
-        private static readonly Color OnCol = new Color(0.30f, 0.78f, 0.42f);              // green: on
-        private static readonly Color AccentCol = new Color(0.36f, 0.45f, 0.92f);          // selected tab / segment
-        private static readonly Color ButtonCol = new Color(0.13f, 0.15f, 0.25f);
+        private static readonly Color OnCol = new Color(0.30f, 0.78f, 0.42f);              // green: on (filled)
+        private static readonly Color AccentCol = new Color(0.30f, 0.38f, 0.86f);          // selected tab / segment (filled)
+        private static readonly Color ButtonCol = new Color(0.50f, 0.57f, 0.88f);          // button frames
+        private static readonly Color TrackCol = new Color(0.15f, 0.18f, 0.36f);           // slider bars, the scroll track
         private static readonly Color DimText = new Color(0.58f, 0.61f, 0.72f);
         private static readonly Color WarnCol = new Color(1f, 0.78f, 0.35f);
+        /// <summary>Room around the frame for the glow; the cropped panel includes it.</summary>
+        private const float Margin = 28f;
 
         // Tabs by task (M4a), in two rows of four: eight across left "Passthrough" at 9 dp.
         private static readonly string[] Tabs = { "Comfort", "View", "First person", "Hands & body", "Controls", "Menus & HUD", "Passthrough", "About" };
@@ -92,12 +99,15 @@ namespace CasualtyVR
             public string[] Options; public Func<int> GetIndex; public Action<int> SetIndex;   // Choice
             public float Min, Max, Step; public Func<float> Get; public Action<float> Set; public Func<float, string> Format;   // Slider
             public Func<string> Value; public Action<int> StepBy;       // Stepper, Info
+            public string Control;  // a controller binding: shown on the controller picture, not as a row (M4c)
         }
 
         private GameObject canvasGo, root;
         private RectTransform body, scrollTrack, scrollThumb;
         private GameObject scrollUp, scrollDown;
-        private TextMeshProUGUI desc, moreLabel, resetLabel;
+        private TextMeshProUGUI desc, pictureDesc, moreLabel, resetLabel;
+        private GameObject descBg;
+        private string picking;   // Controls: the control whose action is being chosen
         private Button moreButton;
         private TMP_FontAsset font;
         private Sprite resetIcon, arrowIcon;
@@ -192,6 +202,12 @@ namespace CasualtyVR
 
         public void Open()
         {
+            // Built in the main menu with stand-in sprites: rebuild with the game's own once a level has loaded them.
+            if (root != null && MenuArt.Source != "game")
+            {
+                MenuArt.Load();
+                if (MenuArt.Source == "game") { Destroy(canvasGo); tabButtons.Clear(); root = null; }
+            }
             if (root == null) Build();
             if (!loggingChanges && Plugin.Verbose)
             {
@@ -211,6 +227,18 @@ namespace CasualtyVR
         public void Close()
         {
             if (root != null) root.SetActive(false);
+        }
+
+        /// <summary>The part of the cropped panel (each side, as a fraction) outside the frame: VrUi's backing stops there.</summary>
+        public static Vector2 BackingInset => new Vector2(Margin / (MenuW + 2f * Margin), Margin / (MenuH + 2f * Margin));
+
+        /// <summary>The settings panel's width in UI-texture pixels at this window size (built or not): game menus zoomed
+        /// on the dashboard (V7) get the same metres per pixel.</summary>
+        public static float PanelPixelWidth()
+        {
+            // CanvasScaler: 1920x1080 reference, match 0.5 = the geometric mean of the width and height ratios.
+            float s = Mathf.Sqrt(Screen.width / 1920f * (Screen.height / 1080f));
+            return (MenuW + 2f * Margin) * s;
         }
 
         /// <summary>The menu's rectangle in UI-texture pixels (VrUi crops the panel to it).</summary>
@@ -240,14 +268,15 @@ namespace CasualtyVR
             clone.name = "CasualtyVR.VrSettingsButton";
             var rt = (RectTransform)clone.transform;
             var src = (RectTransform)settings.transform;
-            rt.localPosition = src.localPosition + new Vector3(0f, -src.rect.height * 1.25f, 0f);
+            rt.localPosition = ArcPosition(ph, settings, src);
             rt.localScale = Vector3.one;
             var button = clone.GetComponent<Button>();
             button.onClick = new Button.ButtonClickedEvent();
             button.onClick.AddListener(Open);
-            // Text only: the cloned round icon was cut off at the menu's edge (user, 2026-10-04). The image
-            // stays as the (invisible) click target.
-            if (clone.TryGetComponent<Image>(out var img)) img.color = new Color(1f, 1f, 1f, 0f);
+            // A round button like the game's three (M3d): their ring, with "VR" inside. Below the gear it was cut off at
+            // the screen's edge (2026-10-04), so it continues their arc instead.
+            MenuArt.Load();
+            if (clone.TryGetComponent<Image>(out var img)) { img.sprite = MenuArt.PauseRing; img.color = Color.white; }
             for (int i = clone.transform.childCount - 1; i >= 0; i--) Destroy(clone.transform.GetChild(i).gameObject);
             if (clone.TryGetComponent<UITooltip>(out var tip))
             {
@@ -256,15 +285,36 @@ namespace CasualtyVR
                 tip.tipDesc = "Comfort, view, first person, hands, controls, menus, passthrough";
             }
             if (font == null && ph.pauseText != null) font = ph.pauseText.font;
-            var label = NewText(rt, "VR", 44, TextAlignmentOptions.Center, new Color(0.55f, 0.9f, 1f));
+            var label = NewText(rt, "VR", 44, TextAlignmentOptions.Center, Color.white);
             Stretch(label.rectTransform);
-            Plugin.Log.LogInfo("VR settings: button added to the pause menu");
+            Plugin.Log.LogInfo($"VR settings: round button added to the pause menu at {rt.localPosition} (gear at {src.localPosition})");
+        }
+
+        /// <summary>
+        /// The next place on the arc of the pause menu's round buttons (return, quit, settings: equal steps around the big
+        /// circle's centre), after the settings button.
+        /// </summary>
+        private static Vector3 ArcPosition(PauseHandler ph, Button settings, RectTransform src)
+        {
+            RectTransform circle = null, quit = null;
+            foreach (var img in ph.pauseContainer.GetComponentsInChildren<Image>(true))
+            {
+                if (img.sprite == null || img.transform.parent != src.parent) continue;
+                if (img.sprite.name == "pauseMenuCircle") circle = img.rectTransform;
+                if (img.sprite.name == "pauseMenuDeath") quit = img.rectTransform;
+            }
+            if (circle == null || quit == null) return src.localPosition + new Vector3(src.rect.width * 1.4f, src.rect.height * 0.6f, 0f);
+            Vector2 c = circle.localPosition, s = (Vector2)src.localPosition - c, q = (Vector2)quit.localPosition - c;
+            float step = Vector2.SignedAngle(q, s);
+            Vector2 next = Quaternion.Euler(0f, 0f, step) * s;
+            return new Vector3(c.x + next.x, c.y + next.y, src.localPosition.z);
         }
 
         // ---- construction ----------------------------------------------------------------------------
 
         private void Build()
         {
+            MenuArt.Load();
             font = PauseHandler.main != null && PauseHandler.main.pauseText != null ? PauseHandler.main.pauseText.font : TMP_Settings.defaultFontAsset;
             resetIcon = MakeResetIcon();
             arrowIcon = MakeArrowIcon();
@@ -278,11 +328,30 @@ namespace CasualtyVR
             scaler.referenceResolution = new Vector2(1920f, 1080f);
             scaler.matchWidthOrHeight = 0.5f;
 
-            var panel = NewImage(canvasGo.transform, "Panel", PanelCol);
-            root = panel.gameObject;
-            var rrt = panel.rectTransform;
+            // Root: black (adds nothing) and catches the pointer; the cropped panel. Inside it the glow, the game's big frame,
+            // and the content panel that everything else is placed on.
+            var rootImg = NewImage(canvasGo.transform, "Root", Color.black);
+            root = rootImg.gameObject;
+            var root_ = rootImg.rectTransform;
+            root_.anchorMin = root_.anchorMax = new Vector2(0.5f, 0.5f);
+            root_.sizeDelta = new Vector2(MenuW + 2f * Margin, MenuH + 2f * Margin);
+            var glow = NewImage(root_, "Glow", GlowCol);
+            glow.sprite = MenuArt.Glow;
+            glow.type = Image.Type.Sliced;
+            glow.pixelsPerUnitMultiplier = 1.2f;
+            glow.raycastTarget = false;
+            Stretch(glow.rectTransform);
+            glow.rectTransform.offsetMin = new Vector2(Margin - 26f, Margin - 26f);
+            glow.rectTransform.offsetMax = new Vector2(26f - Margin, 26f - Margin);
+            var rrt = new GameObject("Panel", typeof(RectTransform)).GetComponent<RectTransform>();
+            rrt.SetParent(root_, false);
             rrt.anchorMin = rrt.anchorMax = new Vector2(0.5f, 0.5f);
             rrt.sizeDelta = new Vector2(MenuW, MenuH);
+            var frame = NewImage(rrt, "Frame", FrameCol);
+            frame.sprite = MenuArt.Frame;
+            frame.type = Image.Type.Sliced;
+            frame.raycastTarget = false;
+            Stretch(frame.rectTransform);
 
             var title = NewText(rrt, "VR settings", 46, TextAlignmentOptions.Left, Color.white);
             Place(title.rectTransform, Side, HeadY, 500f, HeadH);
@@ -297,12 +366,25 @@ namespace CasualtyVR
             for (int i = 0; i < Tabs.Length; i++)
             {
                 var name = Tabs[i];
-                var b = NewButton(rrt, name, 36, () => { if (tab != name) { showMore = false; ShowTab(name); } });
+                var b = NewButton(rrt, name, 36, () => { if (tab != name) { showMore = false; picking = null; ShowTab(name); } });
                 var t = b.GetComponentInChildren<TextMeshProUGUI>();
-                FitText(t, 30f);
+                // Long names ("Hands & body", "Passthrough") shrink to fit between the icon and the right edge; at a
+                // 30-px floor they ran over both (user's headset screenshot, 2026-10-23).
+                FitText(t, 24f);
                 Place((RectTransform)b.transform, Side + (i % perRow) * (tw + 8f), TabY + (i / perRow) * (TabH + 8f), tw, TabH);
+                // A pixel icon at 4 canvas pixels a texel, in the game's category colours (M3c).
+                var icon = NewImage(b.transform, "Icon", MenuArt.IconColour(name));
+                icon.sprite = MenuArt.Icon(name);
+                icon.raycastTarget = false;
+                Place(icon.rectTransform, 16f, (TabH - 32f) * 0.5f, 32f, 32f);
+                t.rectTransform.offsetMin = new Vector2(56f, 0f);
+                t.rectTransform.offsetMax = new Vector2(-12f, 0f);
                 tabButtons.Add((b.GetComponent<Image>(), t, name));
             }
+            // One size for all eight: the one the longest name fits at (mixed sizes looked uneven).
+            float tabSize = 36f;
+            foreach (var (_, t, _) in tabButtons) { t.ForceMeshUpdate(); tabSize = Mathf.Min(tabSize, t.fontSize); }
+            foreach (var (_, t, _) in tabButtons) { t.enableAutoSizing = false; t.fontSize = tabSize; }
 
             body = new GameObject("Body", typeof(RectTransform)).GetComponent<RectTransform>();
             body.SetParent(rrt, false);
@@ -314,16 +396,18 @@ namespace CasualtyVR
             Place((RectTransform)scrollUp.transform, sx, BodyY, ScrollW, ScrollW);
             scrollDown = NewIconButton(rrt, arrowIcon, 180f, () => ScrollBy(3)).gameObject;
             Place((RectTransform)scrollDown.transform, sx, BodyY + RowsShown * RowPitch - 8f - ScrollW, ScrollW, ScrollW);
-            var track = NewImage(rrt, "ScrollTrack", new Color(1f, 1f, 1f, 0.06f));
+            var track = NewImage(rrt, "ScrollTrack", TrackCol);
             scrollTrack = track.rectTransform;
             Place(scrollTrack, sx + ScrollW * 0.5f - 6f, BodyY + ScrollW + 8f, 12f, RowsShown * RowPitch - 2f * ScrollW - 24f);
             var thumb = NewImage(scrollTrack, "Thumb", LabelCol);
             scrollThumb = thumb.rectTransform;
 
             // Description strip (M1c): the pointed-at setting's own config text.
-            var descBg = NewImage(rrt, "Description", new Color(1f, 1f, 1f, 0.035f));
-            Place(descBg.rectTransform, Side, DescY, BodyW, DescH);
-            desc = NewText(descBg.rectTransform, "", 32, TextAlignmentOptions.MidlineLeft, DimText);
+            var descImg = NewImage(rrt, "Description", RowCol);
+            Frame(descImg, RowCol);
+            descBg = descImg.gameObject;
+            Place(descImg.rectTransform, Side, DescY, BodyW, DescH);
+            desc = NewText(descImg.rectTransform, "", 32, TextAlignmentOptions.MidlineLeft, DimText);
             desc.enableWordWrapping = true;
             FitText(desc, 26f);
             Place(desc.rectTransform, 16f, 4f, BodyW - 32f, DescH - 8f);
@@ -354,7 +438,14 @@ namespace CasualtyVR
         {
             for (int i = body.childCount - 1; i >= 0; i--) Destroy(body.GetChild(i).gameObject);
             refreshers.Clear();
-            shown = rows.Where(r => !r.More).ToList();
+            pictureDesc = null;
+            // Controls (M4c): a picture of the controllers with each control's action, instead of the rows.
+            bool picture = tab == "Controls" && !showMore;
+            Place(body, Side, BodyY, BodyW, picture ? DescY + DescH - BodyY : RowsShown * RowPitch);
+            descBg.SetActive(!picture);
+            if (picture) { shown = new List<Row>(); BuildControls(); }
+            if (DbgAim && dbgOpened) dbgAimAt = Time.unscaledTime + 1f;
+            shown = picture ? shown : rows.Where(r => !r.More && r.Control == null).ToList();
             int moreCount = rows.Count(r => r.More);
             if (showMore && moreCount > 0)
             {
@@ -366,7 +457,7 @@ namespace CasualtyVR
 
             foreach (var (image, text, t) in tabButtons)
             {
-                image.color = t == tab ? AccentCol : ButtonCol;
+                SetSelected(image, t == tab);
                 text.color = t == tab ? Color.white : LabelCol;
             }
             moreButton.interactable = moreCount > 0;
@@ -399,6 +490,12 @@ namespace CasualtyVR
 
         private void ShowDesc(Row r)
         {
+            if (pictureDesc != null)
+            {
+                pictureDesc.text = r == null ? "Point at a control to see its action. Click it to choose another." : r.Desc;
+                pictureDesc.color = r == null ? DimText : Color.white;
+                return;
+            }
             if (desc == null) return;
             if (r == null)
             {
@@ -423,12 +520,155 @@ namespace CasualtyVR
             RefreshAll();
         }
 
+        // ---- the Controls page: a picture of the controllers (VRMENU_REVIEW M4c, decision V5) ---------------------
+
+        private static readonly string[] LeftControls = { "L.trigger", "L.grip", "X", "Y", "Menu", "L.stickUp", "L.stickDown", "L.stickLeft", "L.stickRight", "L.stickClick" };
+        private static readonly string[] RightControls = { "R.trigger", "R.grip", "A", "B", "R.stickUp", "R.stickDown", "R.stickClick", "BothGrips" };
+        private const float PadScale = 4.4f;   // canvas pixels per texel of the controller drawing
+
+        /// <summary>
+        /// Both controllers drawn in the game's line style, each control's action in a box beside them with a leader line
+        /// to where the control is. Pointing at a box lights its line and says what it does; clicking it opens the picker.
+        /// The boxes are 64 px on a 65 px pitch (2.5 degrees at the bottom-left corner), using the description strip's room.
+        /// </summary>
+        private void BuildControls()
+        {
+            if (picking != null) { BuildPicker(); return; }
+            float h = DescY + DescH - BodyY;
+            const float colW = 396f, pitch = 65f, boxH = 64f;
+            float padW = MenuArt.PadW * PadScale, padH = MenuArt.PadH * PadScale;
+            float leftPadX = colW + 4f, rightPadX = BodyW - colW - 4f - padW, padY = 48f;
+            for (int side = 0; side < 2; side++)
+            {
+                bool left = side == 0;
+                float px = left ? leftPadX : rightPadX;
+                var title = NewText(body, left ? "Left" : "Right", 32, TextAlignmentOptions.Center, LabelCol);
+                Place(title.rectTransform, px, 0f, padW, 44f);
+                var pad = NewImage(body, left ? "Left controller" : "Right controller", LabelCol);
+                pad.sprite = MenuArt.Controller();
+                pad.raycastTarget = false;
+                // The right hand's is mirrored: flipped about its left edge, so it is placed at its right edge.
+                Place(pad.rectTransform, left ? px : px + padW, padY, padW, padH);
+                if (!left) pad.rectTransform.localScale = new Vector3(-1f, 1f, 1f);
+                var controls = left ? LeftControls : RightControls;
+                float top = (h - controls.Length * pitch) * 0.5f;
+                for (int i = 0; i < controls.Length; i++)
+                {
+                    string key = controls[i];
+                    if (!Plugin.ControlBinds.TryGetValue(key, out var entry)) continue;
+                    var row = rows.FirstOrDefault(r => r.Control == key);
+                    float y = top + i * pitch;
+                    float bx = left ? 0f : BodyW - colW;
+                    var b = NewButton(body, "", 30, () => { picking = key; Plugin.Log.LogInfo($"VR settings: choosing an action for {key}"); Clicked(mini: true); Layout(); });
+                    b.name = "Control " + key;
+                    Place((RectTransform)b.transform, bx, y, colW, boxH);
+                    // Two lines, so they never overlap (user, 2026-10-23: side by side, long names ran into each other): the
+                    // control's name small at the top, its action (the game's own name, up to 23 letters) below at full width.
+                    var name = NewText(b.transform, ShortControl(key), 24, TextAlignmentOptions.TopLeft, LabelCol);
+                    Place(name.rectTransform, 10f, 3f, colW - 20f, 26f);
+                    var action = NewText(b.transform, "", 30, TextAlignmentOptions.BottomRight, Color.white);
+                    Place(action.rectTransform, 10f, 22f, colW - 20f, boxH - 25f);
+                    FitText(action, 24f);
+                    refreshers.Add(() => action.text = ActionName(entry.Value));
+                    // Leader line from the box to the control on the drawing.
+                    Vector2 a = MenuArt.Anchor(key);
+                    float ax = left ? px + (a.x + 0.5f) * PadScale : px + padW - (a.x + 0.5f) * PadScale;
+                    float ay = padY + (MenuArt.PadH - a.y - 0.5f) * PadScale;
+                    var from = new Vector2(left ? bx + colW : bx, y + boxH * 0.5f);
+                    // Hidden until you point at the box (user, 2026-10-23: all the lines at once looked messy).
+                    var line = Line(from, new Vector2(ax, ay), Color.clear);
+                    var dot = NewImage(body, "Anchor", Color.clear);
+                    dot.raycastTarget = false;
+                    Place(dot.rectTransform, ax - 5f, ay - 5f, 10f, 10f);
+                    var fx = b.GetComponent<Fx>();
+                    fx.Enter = () => { line.color = dot.color = FrameCol; ShowDesc(row); };
+                    fx.Exit = () => { line.color = dot.color = Color.clear; ShowDesc(null); };
+                    if (row != null) row.Desc = $"{ControlLabel(key)}: {ActionName(entry.Value)}. Click to choose another action.";
+                }
+            }
+            pictureDesc = NewText(body, "", 30, TextAlignmentOptions.Top, DimText);
+            pictureDesc.enableWordWrapping = true;
+            FitText(pictureDesc, 26f);
+            Place(pictureDesc.rectTransform, leftPadX, padY + padH + 16f, rightPadX + padW - leftPadX, h - padY - padH - 16f);
+            ShowDesc(null);
+        }
+
+        /// <summary>The action picker for one control: every game action as a button; the current one lit.</summary>
+        private void BuildPicker()
+        {
+            string key = picking;
+            if (!Plugin.ControlBinds.TryGetValue(key, out var entry)) { picking = null; BuildControls(); return; }
+            string def = Array.Find(VrInput.Defaults, d => d.control == key).action;
+            var title = NewText(body, $"{ControlLabel(key)}: choose an action", 36, TextAlignmentOptions.MidlineLeft, Color.white);
+            Place(title.rectTransform, 8f, 0f, BodyW - 16f, 56f);
+            const int cols = 4;
+            float w = (BodyW - (cols - 1) * 10f) / cols;
+            var actions = VrInput.Actions;
+            for (int i = 0; i < actions.Length; i++)
+            {
+                string act = actions[i];
+                var b = NewButton(body, ActionName(act) + (act == def ? " (default)" : ""), 30, () =>
+                {
+                    entry.Value = act;
+                    picking = null;
+                    Clicked();
+                    Layout();
+                });
+                b.name = "Action " + act;
+                Place((RectTransform)b.transform, (i % cols) * (w + 10f), 64f + (i / cols) * 80f, w, 72f);
+                var label = b.GetComponentInChildren<TextMeshProUGUI>();
+                label.enableWordWrapping = true;   // "Expand item description" takes two lines
+                label.rectTransform.offsetMin = new Vector2(8f, 0f);
+                label.rectTransform.offsetMax = new Vector2(-8f, 0f);
+                FitText(label, 26f);
+                var img = b.GetComponent<Image>();
+                bool chosen = entry.Value == act;
+                SetSelected(img, chosen);
+            }
+            int last = (actions.Length + cols - 1) / cols;
+            var back = NewButton(body, "Back", 32, () => { picking = null; Clicked(mini: true); Layout(); });
+            Place((RectTransform)back.transform, 0f, 64f + last * 80f, w, 72f);
+        }
+
+        /// <summary>A thin line on the body from a to b (top-left coordinates).</summary>
+        private Image Line(Vector2 a, Vector2 b, Color c)
+        {
+            var img = NewImage(body, "Line", c);
+            img.raycastTarget = false;
+            var rt = img.rectTransform;
+            rt.anchorMin = rt.anchorMax = new Vector2(0f, 1f);
+            rt.pivot = new Vector2(0f, 0.5f);
+            rt.anchoredPosition = new Vector2(a.x, -a.y);
+            Vector2 d = new Vector2(b.x - a.x, -(b.y - a.y));
+            rt.sizeDelta = new Vector2(d.magnitude, 3f);
+            rt.localEulerAngles = new Vector3(0f, 0f, Mathf.Atan2(d.y, d.x) * Mathf.Rad2Deg);
+            return img;
+        }
+
+        private static string ShortControl(string control)
+        {
+            switch (control)
+            {
+                case "R.trigger": case "L.trigger": return "Trigger";
+                case "R.grip": case "L.grip": return "Grip";
+                case "BothGrips": return "Both grips";
+                case "R.stickUp": case "L.stickUp": return "Stick up";
+                case "R.stickDown": case "L.stickDown": return "Stick down";
+                case "L.stickLeft": return "Stick left";
+                case "L.stickRight": return "Stick right";
+                case "R.stickClick": case "L.stickClick": return "Stick click";
+                case "Menu": return "Menu";
+                default: return control;
+            }
+        }
+
         // ---- rows ------------------------------------------------------------------------------------
 
         private void BuildRow(Row r, float y)
         {
             bool header = r.Kind == Kind.Header;
             var bg = NewImage(body, "Row " + r.Label, header ? HeaderRowCol : RowCol);
+            if (!header) Frame(bg, RowCol);   // the game's box outline: the rows read as the crafting list's (M3b)
             Place(bg.rectTransform, 0f, y, RowW, RowH);
             var go = bg.gameObject;
             var group = go.AddComponent<CanvasGroup>();
@@ -475,7 +715,7 @@ namespace CasualtyVR
                         int sel = r.GetIndex();
                         for (int i = 0; i < segs.Count; i++)
                         {
-                            segs[i].img.color = i == sel ? AccentCol : ButtonCol;
+                            SetSelected(segs[i].img, i == sel);
                             segs[i].txt.color = i == sel ? Color.white : LabelCol;
                         }
                     });
@@ -560,7 +800,7 @@ namespace CasualtyVR
             return () =>
             {
                 bool on = r.GetOn();
-                pill.color = on ? OnCol : ButtonCol;
+                if (on) Solid(pill, OnCol); else Frame(pill, ButtonCol);
                 Place(knob.rectTransform, on ? w - h + 10f : 10f, 10f, h - 20f, h - 20f);
                 Place(text.rectTransform, on ? 0f : h - 10f, 0f, w - h + 10f, h);
                 text.text = on ? "On" : "Off";
@@ -584,7 +824,7 @@ namespace CasualtyVR
             float tx = x + Btn + 14f, tw = plusX - 14f - tx;
             var trackImg = NewImage(parent, "Slider", new Color(0f, 0f, 0f, 0f));
             Place(trackImg.rectTransform, tx, 0f, tw, RowH);
-            var bar = NewImage(trackImg.rectTransform, "Bar", ButtonCol);
+            var bar = NewImage(trackImg.rectTransform, "Bar", TrackCol);
             bar.raycastTarget = false;
             Place(bar.rectTransform, 0f, RowH * 0.5f - 6f, tw, 12f);
             var fill = NewImage(trackImg.rectTransform, "Fill", AccentCol);
@@ -781,7 +1021,7 @@ namespace CasualtyVR
                         var entry = kv.Value;
                         list.Add(new Row
                         {
-                            Kind = Kind.Stepper, Label = ControlLabel(kv.Key), Entries = new ConfigEntryBase[] { entry },
+                            Kind = Kind.Stepper, Label = ControlLabel(kv.Key), Entries = new ConfigEntryBase[] { entry }, Control = kv.Key,
                             Desc = $"The game action for the {ControlLabel(kv.Key).ToLowerInvariant()}. In first person the sticks walk, climb and turn.",
                             Value = () => ActionName(entry.Value),
                             StepBy = d =>
@@ -799,6 +1039,7 @@ namespace CasualtyVR
                     break;
                 case "Menus & HUD":
                     list.Add(Slider("HUD size", Plugin.HudScale, 0.5f, 2f, 0.1f, v => $"{v * 100f:F0}%"));
+                    list.Add(Switch("Zoom the game's menus", Plugin.ZoomGameMenus));
                     list.Add(Choice("Cursor", Plugin.CursorStyle, ("Hand", "Hand"), ("Cursor", "Arrow"), ("Off", "Off")));
                     list.Add(new Row
                     {
@@ -957,7 +1198,7 @@ namespace CasualtyVR
         {
             if (!IsOpen) return;
             var rrt = (RectTransform)root.transform;
-            float mPerPx = Plugin.SettingsWidth.Value / MenuW;
+            float mPerPx = Plugin.SettingsWidth.Value / (MenuW + 2f * Margin);
             float d = new Vector2(Plugin.SettingsHeight.Value, Plugin.SettingsDistance.Value).magnitude;
             float minAng = float.MaxValue, minDp = float.MaxValue;
             string minName = "-", minText = "-";
@@ -1003,9 +1244,12 @@ namespace CasualtyVR
             var targets = new List<(string name, RectTransform t, float fx)>();
             void Add(string name, string path, float fx = 0.5f)
             {
-                var t = root.transform.Find(path) as RectTransform;
-                if (t != null) targets.Add((name, t, fx)); else Plugin.Log.LogWarning($"VR settings aim: '{path}' not found");
+                var t = root.transform.Find("Panel/" + path) as RectTransform;
+                if (t != null && t.gameObject.activeInHierarchy) targets.Add((name, t, fx));
             }
+            Add("control R.trigger", "Body/Control R.trigger");
+            Add("action jump", "Body/Action jump");
+            Add("action back", "Body/Button Back");
             Add("tab View", "Button View");
             Add("switch Blackout", "Body/Row Blackout when unconscious");
             Add("segment Snap", "Body/Row Turning/Button Snap");
@@ -1051,9 +1295,31 @@ namespace CasualtyVR
             return t;
         }
 
+        /// <summary>The game's box outline (uiBlockNano), tinted: black inside, so the backing shows through.</summary>
+        private static void Frame(Image img, Color tint)
+        {
+            img.sprite = MenuArt.Nano;
+            img.type = Image.Type.Sliced;
+            img.color = tint;
+        }
+
+        private static void Solid(Image img, Color c)
+        {
+            img.sprite = null;
+            img.type = Image.Type.Simple;
+            img.color = c;
+        }
+
+        /// <summary>Chosen tabs and segments are filled with the accent colour; the others are outlines.</summary>
+        private static void SetSelected(Image img, bool selected)
+        {
+            if (selected) Solid(img, AccentCol); else Frame(img, ButtonCol);
+        }
+
         private Button NewButton(Transform parent, string text, float size, UnityEngine.Events.UnityAction onClick)
         {
             var img = NewImage(parent, "Button " + text, ButtonCol);
+            Frame(img, ButtonCol);
             var b = img.gameObject.AddComponent<Button>();
             var colors = b.colors;
             colors.highlightedColor = new Color(1.5f, 1.5f, 1.6f);

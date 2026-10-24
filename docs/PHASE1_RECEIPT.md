@@ -76,6 +76,11 @@ The dev config was restored after every run (SHA-256 `d1d36925…`).
 plain version number. Changelog and README: [release/CHANGELOG.md](../release/CHANGELOG.md),
 [release/README.md](../release/README.md) (*VR settings*).
 
+## Headset pass
+
+**2026-10-18: passed.** You tested 1.3.0-test2 (Phases 1 and 2) in the headset: "Both Phases look good." V7 is still
+open.
+
 ## For the headset pass
 
 1. **Readability:** open F12 standing and seated. Can you read the rows and the description without leaning in? Is

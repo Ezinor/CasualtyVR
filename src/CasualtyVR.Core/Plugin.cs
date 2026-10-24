@@ -16,7 +16,7 @@ namespace CasualtyVR
     public class Plugin : BaseUnityPlugin
     {
         public const string Guid = "casualtyvr.core";
-        public const string Version = "1.3.0-test2";
+        public const string Version = "1.3.0-test7";
         /// <summary>BepInEx needs a plain version number (test builds carry a suffix in Version).</summary>
         public const string NumericVersion = "1.3.0";
         /// <summary>The game version this release was tested with (Application.version).</summary>
@@ -43,6 +43,7 @@ namespace CasualtyVR
         internal static ConfigEntry<float> SettingsDistance;
         internal static ConfigEntry<float> SettingsHeight;
         internal static ConfigEntry<float> SettingsWidth;
+        internal static ConfigEntry<bool> ZoomGameMenus;
         internal static ConfigEntry<float> CursorSize;
         internal static ConfigEntry<string> LaserHand;
         internal static ConfigEntry<bool> ShowLaser;
@@ -151,6 +152,7 @@ namespace CasualtyVR
             SettingsDistance = Config.Bind("Dashboard", "SettingsDistanceMetres", 0.8f, "Distance of the VR settings panel from your head when it opens.");
             SettingsHeight = Config.Bind("Dashboard", "SettingsHeightMetres", -0.12f, "Height of the VR settings panel's centre relative to your eyes when it opens (negative = below).");
             SettingsWidth = Config.Bind("Dashboard", "SettingsWidthMetres", 0.95f, "Width of the VR settings panel.");
+            ZoomGameMenus = Config.Bind("Dashboard", "ZoomGameMenus", true, "Show the game's crafting, health (wound view) and trade screens, and the inventory in first person, on their own panel in front of you at the VR settings' size, instead of the whole screen on the dashboard.");
             DioramaDistance = Config.Bind("Diorama", "DistanceMetres", 1.2f, "Distance from the seated head origin to the game plane.");
             PopupScale = Config.Bind("Diorama", "PopupScale", 1f, "Multiplier on the pop-up-book layer depths (0 = flat card).");
             VoxelsOn = Config.Bind("Voxels", "Enabled", true, "Show the terrain as 3D blocks in the headset (the flat game on the monitor is unchanged).");

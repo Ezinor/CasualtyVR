@@ -1,4 +1,4 @@
-# CasualtyVR 1.3.0-test2
+# CasualtyVR 1.3.0-test7
 
 A VR mod for **Casualties: Unknown** (Demo, game version 7.0.1). It shows the game as a 3D diorama in front of
 you: the terrain becomes solid blocks, liquids fill their tunnels, and characters and objects get real depth.
@@ -65,7 +65,7 @@ Keyboard: **F10** start/stop VR, **F9** recenter, **Page Up / Page Down** zoom, 
 
 ## VR settings
 
-Open the pause menu and press the cyan **VR** button, or press **F12**. The menu opens on its own panel in front of
+Open the pause menu and press the round **VR** button (beside the gear), or press **F12**. The menu opens on its own panel in front of
 you. Point with the laser and click with the trigger: on/off rows are switches (click anywhere on the row), short
 lists are buttons side by side, and amounts are sliders (hold the trigger and drag, or use the fine `<` `>` at the
 ends). Point at a row to read what it does, under the list. Changes are saved immediately. A row that differs from
@@ -79,10 +79,11 @@ shows the fine tuning. Long pages scroll with either stick, the arrows on the ri
   depth, character thickness and liquid depth.
 - **First person** and **Hands & body:** see *First-person mode*. Controller hands (in the diorama) and vibration
   are under *Hands & body*.
-- **Controls:** any controller input to any game action (named as in the game's own key-bind settings); under
-  *More settings* the laser hand, the beam, and the minigame hand offset (shift the game's hand image relative to
+- **Controls:** a picture of both controllers with each input's action beside it. Click an action to choose another
+  for that input (any game action, named as in the game's own key-bind settings). Under *More settings*: the laser hand, the beam, and the minigame hand offset (shift the game's hand image relative to
   where clicks land, if it does not line up with how you aim; 0 / 0 is the game's own placement).
-- **Menus & HUD:** HUD size, cursor style (Hand / Arrow / Off) and size; under *More settings* the placement of
+- **Menus & HUD:** HUD size, *Zoom the game's menus* (crafting, health and trade screens, and the inventory in first
+  person, on their own panel in front of you; on by default), cursor style (Hand / Arrow / Off) and size; under *More settings* the placement of
   this panel, of the menu panel (dashboard) and of the main menu.
 - **Passthrough:** greenscreen. It paints everything outside the game window, and the game's background, in a
   key colour (green, blue, magenta, black, white, or custom RGB under *More settings*), for chroma-key passthrough

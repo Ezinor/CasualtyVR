@@ -54,8 +54,8 @@ Phase 2; the idle sway, the run bob and a moderate judder were measured for FP 8
 
 ### Phase 1 — VR menu framework (M)
 
-**Built 2026-10-18, test build `1.3.0-test1`:** see [PHASE1_RECEIPT.md](PHASE1_RECEIPT.md). Headless checks pass; the
-headset gate (readability, V7) is open.
+**Built 2026-10-18, test build `1.3.0-test1`:** see [PHASE1_RECEIPT.md](PHASE1_RECEIPT.md). Headless checks pass. **Headset
+gate passed** (2026-10-18). V7 is still open.
 
 | Work | From |
 |---|---|
@@ -77,7 +77,7 @@ slider and a tab.
 
 **Built 2026-10-18, test build `1.3.0-test2`:** see [PHASE2_RECEIPT.md](PHASE2_RECEIPT.md). The judder turned out to
 be position corrections, not 50 Hz stepping (the bodies are already interpolated). The diorama's pop-up depth refresh
-(4–10 ms every 120 frames) is moved to Phase 7. The headset gate (comfort) is open.
+(4–10 ms every 120 frames) is moved to Phase 7. **Headset gate passed** (2026-10-18).
 
 | Work | From |
 |---|---|
@@ -93,13 +93,19 @@ be position corrections, not 50 Hz stepping (the bodies are already interpolated
 
 ### Phase 3 — Menu look and controls picture (M)
 
+**Built 2026-10-18, test build `1.3.0-test7`:** see [PHASE3_RECEIPT.md](PHASE3_RECEIPT.md). The game's own frame
+sprites are used (V1: full). V7 decided yes and built: the game's crafting, wound view, trade and (first person)
+inventory are zoomed too. Headset pass of test4 (2026-10-23): look and pause button good; two fixes in test5
+(Controls lines on hover only, the health screen's bottom buttons); test5 pass: two more in test6 (two-line Controls boxes,
+zoomed menus at most 40 degrees tall); test6 pass: tab names fitted in test7.
+
 | Work | From |
 |---|---|
 | The game's frames, glow and translucent panels, from its own sprites ("full if practical"; report if not) | M3a (V1) |
 | Row dividers and accent colours; tab icons | M3b, M3c |
 | A round VR button in the pause menu, matching the game's | M3d |
 | The Controls page as a controller picture | M4c (V5) |
-| Enlarge the game's own menus on the dashboard, if V7 = yes | V7 |
+| Enlarge the game's own menus on the dashboard (V7 = yes, built) | V7 |
 
 **Headset gate:** the look.
 
@@ -171,4 +177,4 @@ be position corrections, not 50 Hz stepping (the bodies are already interpolated
 
 ## Open decision
 
-- **V7** — enlarge the game's own menus (crafting, inventory) on the dashboard: decided after Phase 1.
+- **V7** — decided 2026-10-18: yes (built in Phase 3).

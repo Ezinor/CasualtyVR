@@ -145,7 +145,7 @@ Suggested order: M1, then M2a–d, then M3, then M4, then M5 and M2f.
 | V4 | Advanced settings | **Hidden**, behind a button named *More settings* (or *More…*) | M4b, with that label |
 | V5 | Controls page | **Controller picture** | M4c |
 | V6 | Panel placement | **Keep the number rows** | M5a dropped; the rows stay (under *More settings*); M5b (opens in front) stays |
-| V7 | Also zoom the game's own menus | **Decide after seeing the zoomed VR menu** | Later |
+| V7 | Also zoom the game's own menus | **Yes** (2026-10-18, after seeing the zoomed VR menu): crafting, inventory, wound view | Built in Phase 3, see PHASE3_RECEIPT |
 
 ## 6. Testing
 

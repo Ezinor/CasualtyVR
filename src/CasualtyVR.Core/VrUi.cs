@@ -48,6 +48,9 @@ namespace CasualtyVR
         private readonly Material panelMaterial;      // opaque dashboard
         private readonly Material additiveMaterial;   // HUD over the diorama, and the desktop mirror
         private readonly Material imguiMaterial;      // captured IMGUI windows (ImguiCapture), over every panel
+        // The VR settings panel (Phase 3): a dark see-through backing, then the UI texture added on top, as the game's
+        // own screen is composited (its UI is white lines on black: the black lets the scene through, the lines glow).
+        private readonly Material backingMaterial = new Material(Shader.Find("Sprites/Default")) { name = "CasualtyVR.SettingsBacking", color = new Color(0.010f, 0.014f, 0.040f, 0.86f) };
         private readonly GameObject desktopImgui;     // ...and over the desktop mirror
         private readonly Dictionary<Canvas, int> converted = new Dictionary<Canvas, int>();   // canvas -> original layer
         private float nextScan;
@@ -79,6 +82,8 @@ namespace CasualtyVR
         private Quaternion settingsRot = Quaternion.identity;
         /// <summary>The settings menu is shown on its own panel this frame.</summary>
         public bool SettingsPanelShown { get; private set; }
+        /// <summary>The game menu zoomed on the dashboard (V7: crafting, wound view, trade, inventory in first person), or null.</summary>
+        public string ZoomedMenu { get; private set; }
 
         /// <summary>Place the settings panel in front of the head again on the next frame (menu opened, recentred).</summary>
         public void PlaceSettingsAgain() => settingsPlaced = false;
@@ -220,9 +225,16 @@ namespace CasualtyVR
             bool menuScene = PlayerCamera.main == null || EndScreenShown() || WorldGenerating();
             // The settings menu is modal: on its own panel, also over the main menu (instead of the theatre).
             Rect menuRect = VrSettingsMenu.IsOpen ? VrSettingsMenu.Instance.ScreenRect() : Rect.zero;
-            bool settingsPanel = menuRect.width > 1f && menuRect.height > 1f;
-            if (!settingsPanel) settingsPlaced = false;
-            SettingsPanelShown = settingsPanel;
+            bool settingsOpen = menuRect.width > 1f && menuRect.height > 1f;
+            // V7 (user, 2026-10-18): the game's own menus are zoomed the same way, at the settings panel's pixel size.
+            string zoomed = null;
+            if (!settingsOpen && !menuScene && Plugin.ZoomGameMenus.Value && GameMenuRect(out var gameRect, out zoomed)) menuRect = gameRect;
+            bool settingsPanel = settingsOpen || zoomed != null;
+            if (!settingsPanel || zoomed != ZoomedMenu) settingsPlaced = false;
+            if (zoomed != ZoomedMenu) Plugin.Log.LogInfo($"UI: game menu zoom {(zoomed != null ? $"on: {zoomed} ({menuRect.width:F0}x{menuRect.height:F0} px)" : "off")}");
+            if (zoomed != ZoomedMenu && zoomed != null && Plugin.Verbose) DumpMenuParts();
+            ZoomedMenu = zoomed;
+            SettingsPanelShown = settingsOpen;
             SetDashboardUv(settingsPanel
                 ? Rect.MinMaxRect(Mathf.Clamp01(menuRect.xMin / rt.width), Mathf.Clamp01(menuRect.yMin / rt.height), Mathf.Clamp01(menuRect.xMax / rt.width), Mathf.Clamp01(menuRect.yMax / rt.height))
                 : new Rect(0f, 0f, 1f, 1f));
@@ -272,8 +284,17 @@ namespace CasualtyVR
                     settingsRot = yaw * Quaternion.LookRotation(local.normalized, Vector3.up);
                 }
                 dashboard.transform.SetPositionAndRotation(VrSpace.Point(settingsPos), VrSpace.Rot(settingsRot));
-                float wMetres = Plugin.SettingsWidth.Value;
+                // A game menu: as many metres per pixel as the settings panel, so the two read the same.
+                float wMetres = zoomed == null ? Plugin.SettingsWidth.Value
+                    : Mathf.Min(1.0f, Plugin.SettingsWidth.Value * menuRect.width / Mathf.Max(1f, VrSettingsMenu.PanelPixelWidth()));   // the wound view spans the screen: at 1.2 m its buttons left the view
                 float aspect = (dashUv.height * rt.height) / Mathf.Max(1f, dashUv.width * rt.width);
+                // ...and no taller than 40 degrees at its distance, so it fits the view: at the settings' pixel size the
+                // crafting panel was 0.72 m tall and its top and bottom left the headset's view (user, 2026-10-23).
+                if (zoomed != null)
+                {
+                    float maxH = 2f * Plugin.SettingsDistance.Value * Mathf.Tan(20f * Mathf.Deg2Rad);
+                    if (wMetres * aspect > maxH) wMetres = maxH / aspect;
+                }
                 dashboard.transform.localScale = new Vector3(wMetres, wMetres * aspect, 1f) * VrSpace.Scale;
             }
             else if (dashboard.activeSelf)
@@ -344,6 +365,100 @@ namespace CasualtyVR
             Vector2 l = PanelLocal(dashboard, pixel);
             world = dashboard.transform.TransformPoint(new Vector3(l.x, l.y, 0f));
             return true;
+        }
+
+        /// <summary>
+        /// V7: the open game menu's rectangle in UI-texture pixels, at its final size (the crafting panel opens from 10 %
+        /// and the inventory from 1 %; the crop must not grow with the animation), with a small margin. Not while the
+        /// pause menu, a minigame or the console is up (they would be cropped away), and the inventory only in first
+        /// person: in the diorama it is on the HUD, lined up with the world for dragging items out, and already big.
+        /// </summary>
+        private bool GameMenuRect(out Rect px, out string name)
+        {
+            px = default;
+            name = null;
+            var pc = PlayerCamera.main;
+            if (pc == null || PauseHandler.paused) return false;
+            if (MinigameBase.main != null && MinigameBase.main.currentMinigame) return false;
+            if (ConsoleScript.instance != null && ConsoleScript.instance.active) return false;
+            bool any = false;
+            Rect r = default;
+            void Add(RectTransform t, RectTransform root)
+            {
+                if (t == null || root == null) return;
+                var f = FinalRect(t, root);
+                r = any ? Rect.MinMaxRect(Mathf.Min(r.xMin, f.xMin), Mathf.Min(r.yMin, f.yMin), Mathf.Max(r.xMax, f.xMax), Mathf.Max(r.yMax, f.yMax)) : f;
+                any = true;
+            }
+            // The wound view's and the inventory's own rectangles are the whole screen: frame their visible parts, without
+            // the full-screen fades, the inventory's 5000-px drag edges and its 1280-px clothing strip (measured, verbose
+            // "UI zoom part" lines).
+            void AddParts(RectTransform root)
+            {
+                if (root == null) return;
+                foreach (Transform c in root)
+                {
+                    if (!c.gameObject.activeSelf || !(c is RectTransform crt) || c.GetComponent<Graphic>() == null) continue;
+                    var f = FinalRect(crt, root);
+                    if (f.width > rt.width * 0.6f || f.height > rt.height * 0.9f) continue;
+                    Add(crt, root);
+                }
+            }
+            if (Active(pc.woundView))
+            {
+                // The health screen spans the whole width, and the HUD buttons along the bottom (the heart that toggles it,
+                // the icons at the bottom right) are used with it: framed by its parts they were cut in half (user,
+                // 2026-10-23). It gets the whole screen, at most 1 m wide.
+                name = "wound view";
+                px = new Rect(0f, 0f, rt.width, rt.height);
+                return true;
+            }
+            else if (Active(pc.craftingPanel))
+            {
+                name = "crafting";
+                Add(pc.craftingPanel.transform as RectTransform, pc.craftingPanel.transform as RectTransform);
+            }
+            else if (Active(pc.tradeMenu))
+            {
+                name = "trade";
+                Add(pc.tradeMenu.transform as RectTransform, pc.tradeMenu.transform as RectTransform);
+                if (pc.radialMenu != null && pc.radialMenu.gameObject.activeInHierarchy) AddParts(pc.radialMenu);
+            }
+            else if (VrSpace.FirstPerson && pc.radialOpen && pc.radialMenu != null && pc.radialMenu.gameObject.activeInHierarchy)
+            {
+                name = "inventory";
+                AddParts(pc.radialMenu);
+            }
+            if (!any) { name = null; return false; }
+            const float margin = 16f;
+            px = Rect.MinMaxRect(Mathf.Max(0f, r.xMin - margin), Mathf.Max(0f, r.yMin - margin), Mathf.Min(rt.width, r.xMax + margin), Mathf.Min(rt.height, r.yMax + margin));
+            return px.width > 16f && px.height > 16f;
+        }
+
+        // Verbose: the open menu's direct children and their final rectangles (which parts the zoom should frame).
+        private void DumpMenuParts()
+        {
+            var pc = PlayerCamera.main;
+            foreach (var root in new[] { pc.woundView != null ? pc.woundView.transform as RectTransform : null, pc.radialMenu, pc.craftingPanel != null ? pc.craftingPanel.transform as RectTransform : null })
+            {
+                if (root == null || !root.gameObject.activeInHierarchy) continue;
+                foreach (Transform c in root)
+                    if (c is RectTransform crt) Plugin.Log.LogInfo($"UI zoom part: {root.name}/{c.name} active {c.gameObject.activeSelf} graphic {c.GetComponent<Graphic>() != null} rect {FinalRect(crt, root)}");
+            }
+        }
+
+        /// <summary>
+        /// A RectTransform's rectangle in UI-texture pixels as it will be once root has finished its opening animation (root's
+        /// own scale taken as 1). The UI camera maps world units to pixels, so a canvas' world positions are pixels.
+        /// </summary>
+        private static Rect FinalRect(RectTransform t, RectTransform root)
+        {
+            var c = new Vector3[4];
+            t.GetLocalCorners(c);
+            Vector3 a = root.InverseTransformPoint(t.TransformPoint(c[0])), b = root.InverseTransformPoint(t.TransformPoint(c[2]));
+            Vector3 s = root.parent != null ? root.parent.lossyScale : Vector3.one;
+            Vector2 o = root.position;
+            return Rect.MinMaxRect(o.x + Mathf.Min(a.x, b.x) * s.x, o.y + Mathf.Min(a.y, b.y) * s.y, o.x + Mathf.Max(a.x, b.x) * s.x, o.y + Mathf.Max(a.y, b.y) * s.y);
         }
 
         private static bool MenuOpen()
@@ -464,8 +579,19 @@ namespace CasualtyVR
                 if (!go.activeSelf) continue;
                 var r = go.GetComponent<MeshRenderer>();
                 var mesh = go.GetComponent<MeshFilter>().sharedMesh;
-                overlayCmd.DrawMesh(mesh, go.transform.localToWorldMatrix, r.sharedMaterial, 0, 0);
-                drawn++;
+                if (go == dashboard && (SettingsPanelShown || ZoomedMenu != null))
+                {
+                    Vector2 inset = SettingsPanelShown ? VrSettingsMenu.BackingInset : Vector2.zero;
+                    var back = go.transform.localToWorldMatrix * Matrix4x4.Scale(new Vector3(1f - 2f * inset.x, 1f - 2f * inset.y, 1f));
+                    overlayCmd.DrawMesh(mesh, back, backingMaterial, 0, 0);
+                    overlayCmd.DrawMesh(mesh, go.transform.localToWorldMatrix, additiveMaterial, 0, 0);
+                    drawn += 2;
+                }
+                else
+                {
+                    overlayCmd.DrawMesh(mesh, go.transform.localToWorldMatrix, r.sharedMaterial, 0, 0);
+                    drawn++;
+                }
                 // Mods' OnGUI windows on top of the game's UI, on whichever panel shows it.
                 if (ImguiCapture.Running && ImguiCapture.HasContent && ImguiCapture.Texture != null) { overlayCmd.DrawMesh(mesh, go.transform.localToWorldMatrix, imguiMaterial, 0, 0); drawn++; }
                 cursorPanel = go;
@@ -649,6 +775,7 @@ namespace CasualtyVR
             Object.Destroy(reticleMesh);
             Object.Destroy(beamMaterial);
             Object.Destroy(cursorMaterial);
+            Object.Destroy(backingMaterial);
             SceneManager.sceneLoaded -= OnSceneLoaded;
             ScreenPassFilter.Forget(uiCam);
             foreach (var kv in converted)

@@ -7,12 +7,15 @@
 # Scenarios (each a fresh game, seed 1234, diorama):
 #   layout   every tab, then every tab with "More settings": each control's angular size at the default panel
 #            (VR settings check lines: >= 2.5 degrees) and the smallest text; an xr-sim capture per tab
-#            (Working/menu-phase1/)
+#            (Working/menu-phase3/)
 #   laser    the right hand's laser (xr-sim "hand r point", angles from --cvr-dbg-menu-aim) clicks a switch row, a
 #            segment, drags a slider, opens More settings, scrolls with the stick and changes tab
+#   controls the Controls page's controller picture: a click on a control's box opens the action picker, a pick binds it
+#   pause    the pause menu (xr-sim menu button) has the round VR button, on the arc of the game's buttons
 #   fp       the same panel opens in first person, in front of the head; the sticks do not walk meanwhile
 [CmdletBinding()]
-param([string[]]$Only = @())
+# -Size 2560x1440: run the game window at that size instead of -Windowed (menus scale with it).
+param([string[]]$Only = @(), [string]$Size = "")
 $ErrorActionPreference = "Stop"
 $root = Resolve-Path (Join-Path $PSScriptRoot "..")
 $d = "$env:LOCALAPPDATA\xr-sim\casualtyvr"
@@ -37,7 +40,14 @@ function Start-Game([string[]]$extra) {
     Remove-Item $bepinexLog -ErrorAction SilentlyContinue
     $script:log = $bepinexLog
     $started = Get-Date
-    & (Join-Path $root "tools\launch-dev.ps1") -Windowed -XrSim -NoWait (@("--cvr-vr", "--cvr-autostart", "--cvr-seed", "1234") + $extra) | Out-Null
+    if ($Size) {
+        $w, $h = $Size -split "x"
+        # The dev config keeps the window on a 1920x1080 monitor (Window.PreferredDisplay): not for this run.
+        $c = [IO.File]::ReadAllText($cfg)
+        [IO.File]::WriteAllText($cfg, [regex]::Replace($c, "(?m)^PreferredDisplay = .*$", "PreferredDisplay = "))
+        & (Join-Path $root "tools\launch-dev.ps1") -XrSim -NoWait (@("-screen-fullscreen", "0", "-screen-width", $w, "-screen-height", $h, "--cvr-vr", "--cvr-autostart", "--cvr-seed", "1234") + $extra) | Out-Null
+    }
+    else { & (Join-Path $root "tools\launch-dev.ps1") -Windowed -XrSim -NoWait (@("--cvr-vr", "--cvr-autostart", "--cvr-seed", "1234") + $extra) | Out-Null }
     $deadline = (Get-Date).AddSeconds(20)
     do {
         Start-Sleep -Milliseconds 300
@@ -73,7 +83,7 @@ function Click([string]$name) {
 Copy-Item $cfg $cfgBackup -Force
 try {
     if (Want "layout") {
-        $out = Join-Path $root "Working\menu-phase1"
+        $out = Join-Path $root "Working\menu-phase3"
         New-Item -ItemType Directory -Force $out | Out-Null
         foreach ($more in @($false, $true)) {
             $extra = @("--cvr-dbg-settings", "all") + $(if ($more) { @("--cvr-dbg-settings-more") } else { @() })
@@ -133,8 +143,55 @@ try {
         # View has more rows than fit once More settings is on: the stick scrolls.
         C @("stick r 0 -1"); Start-Sleep -Milliseconds 900; C @("stick r 0 0"); Start-Sleep -Milliseconds 500
         Check "laser: the stick scrolls the list" (Wait-For "VR settings: scrolled to row [1-9]" 3) ((Select-String -Path $log -Pattern "VR settings: scrolled to row \d+" | Select-Object -Last 1).Line)
-        & "$t\xrsim-shot.ps1" -Dir $d -Out (Join-Path $root "Working\menu-phase1\laser") -Quiet | Out-Null
+        & "$t\xrsim-shot.ps1" -Dir $d -Out (Join-Path $root "Working\menu-phase3\laser") -Quiet | Out-Null
         Check-NoExceptions "laser"
+    }
+
+    if (Want "controls") {
+        # The Controls page is a picture of the controllers (Phase 3, M4c): click a control's box, pick an action.
+        $ready = Start-Game @("--cvr-dbg-settings", "controls", "--cvr-dbg-menu-aim")
+        Check "controls: game ready" $ready ""
+        Check "controls: the picture's boxes are aimable" (Wait-For "VR settings aim 'control R.trigger'" 30) (Aim "control R.trigger")
+        & "$t\xrsim-shot.ps1" -Dir $d -Out (Join-Path $root "Working\menu-phase3\controls") -Quiet | Out-Null
+        [void](Click "control R.trigger")
+        Check "controls: a click opens the action picker" (Wait-For "VR settings: choosing an action for R.trigger" 5) "choosing an action for R.trigger"
+        Check "controls: the picker's buttons are aimable" (Wait-For "VR settings aim 'action jump'" 10) (Aim "action jump")
+        & "$t\xrsim-shot.ps1" -Dir $d -Out (Join-Path $root "Working\menu-phase3\picker") -Quiet | Out-Null
+        [void](Click "action jump")
+        Check "controls: picking an action binds it" (Wait-For "VR settings: Controls\.R\.trigger = jump" 5) "Controls.R.trigger = jump"
+        Check-NoExceptions "controls"
+    }
+
+    if (Want "zoom") {
+        # V7: the game's own menus on their own panel, at the settings panel's pixel size (B craft, Y health, X inventory).
+        $ready = Start-Game @()
+        Check "zoom: game ready" $ready ""
+        C @("btn b press 150"); Start-Sleep 2
+        Check "zoom: the crafting panel is zoomed" (Wait-For "UI: game menu zoom on: crafting" 5) ((Select-String -Path $log -Pattern "game menu zoom on: crafting" | Select-Object -Last 1).Line)
+        & "$t\xrsim-shot.ps1" -Dir $d -Out (Join-Path $root "Working\menu-phase3\zoom-crafting") -Quiet | Out-Null
+        C @("btn b press 150"); Start-Sleep 1.5
+        Check "zoom: closing it ends the zoom" (Wait-For "UI: game menu zoom off" 5) "game menu zoom off"
+        C @("btn y press 150"); Start-Sleep 2
+        Check "zoom: the wound view is zoomed" (Wait-For "UI: game menu zoom on: wound view" 5) ((Select-String -Path $log -Pattern "game menu zoom on: wound view" | Select-Object -Last 1).Line)
+        & "$t\xrsim-shot.ps1" -Dir $d -Out (Join-Path $root "Working\menu-phase3\zoom-woundview") -Quiet | Out-Null
+        C @("btn y press 150"); Start-Sleep 1
+        Check-NoExceptions "zoom"
+        $ready = Start-Game @("--cvr-dbg-fp", "--cvr-dbg-cave")
+        Check "zoom fp: game ready" $ready ""
+        Start-Sleep 4
+        C @("btn x press 150"); Start-Sleep 2
+        Check "zoom fp: the inventory is zoomed in first person" (Wait-For "UI: game menu zoom on: inventory" 5) ((Select-String -Path $log -Pattern "game menu zoom on: inventory" | Select-Object -Last 1).Line)
+        & "$t\xrsim-shot.ps1" -Dir $d -Out (Join-Path $root "Working\menu-phase3\zoom-inventory-fp") -Quiet | Out-Null
+        Check-NoExceptions "zoom fp"
+    }
+
+    if (Want "pause") {
+        $ready = Start-Game @()
+        Check "pause: game ready" $ready ""
+        C @("btn menu press 150"); Start-Sleep 2.5
+        Check "pause: round VR button on the arc" (Has "VR settings: round button added to the pause menu") ((Select-String -Path $log -Pattern "round button added" | Select-Object -Last 1).Line)
+        & "$t\xrsim-shot.ps1" -Dir $d -Out (Join-Path $root "Working\menu-phase3\pause") -Quiet | Out-Null
+        Check-NoExceptions "pause"
     }
 
     if (Want "fp") {
@@ -149,7 +206,7 @@ try {
         C @("stick l 0 0")
         $held = [regex]::Match($line, 'held=\[([^\]]*)\]').Groups[1].Value
         Check "fp: the left stick does not walk while the menu is open" ($held -eq "") "held=[$held]"
-        & "$t\xrsim-shot.ps1" -Dir $d -Out (Join-Path $root "Working\menu-phase1\fp") -Quiet | Out-Null
+        & "$t\xrsim-shot.ps1" -Dir $d -Out (Join-Path $root "Working\menu-phase3\fp") -Quiet | Out-Null
         Check-NoExceptions "fp"
     }
 }

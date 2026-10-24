@@ -122,6 +122,10 @@ The dev config was restored after every run (SHA-256 `d1d36925…`).
 It contains Phase 1 and Phase 2. `1.3.0-test1` (Phase 1 only) is still in `dist/`. The changelog and README are
 updated ([release/CHANGELOG.md](../release/CHANGELOG.md), *First-person mode › Settings*).
 
+## Headset pass
+
+**2026-10-18: passed.** You tested 1.3.0-test2 in the headset: "Both Phases look good."
+
 ## For the headset pass
 
 1. **Walking:** push the stick part way. Is 1.4 m/s a usable walk, and is the change to a run (about ¾ push) easy to

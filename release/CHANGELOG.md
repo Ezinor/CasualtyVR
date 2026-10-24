@@ -1,5 +1,50 @@
 # Changelog
 
+## 1.3.0-test7 — 2026-10-23 (test build)
+
+- **Tab names fit their tabs:** "First person", "Hands & body", "Menus & HUD" and "Passthrough" ran over their
+  icons and edges. All eight tab names are now one size, which fits the longest.
+
+## 1.3.0-test6 — 2026-10-23 (test build)
+
+After your headset pass of test5:
+
+- **Controls page:** each box has the control's name on a small line at the top and its action below, so long
+  names no longer run into each other.
+- **Zoomed crafting screen:** it is sized to fit the view (at most 40 degrees tall), so its top and bottom no longer
+  leave the headset's view. Zoomed game menus are now at most about 0.58 m tall at the default distance.
+
+## 1.3.0-test5 — 2026-10-23 (test build)
+
+After your headset pass of test4:
+
+- **Controls page:** the lines from the boxes to the controller show only for the box you point at, not all at once.
+- **Health screen:** zoomed, it now shows the whole screen, so the buttons along the bottom (the heart, the icons
+  at the bottom right) are no longer cut in half.
+
+## 1.3.0-test4 — 2026-10-18 (test build)
+
+Everything in test3, plus:
+
+- **The game's own menus are zoomed too:** the crafting screen, the health screen (wound view), the trade screen and,
+  in first person, the inventory now open on their own see-through panel in front of you, at the same size as the
+  VR settings, instead of the whole screen on the low dashboard. *Zoom the game's menus* (VR settings, *Menus & HUD*)
+  turns it off. The pause menu, minigames and the console are unchanged. In the diorama the inventory stays where it
+  is, over the world, so you can still drag items out of it.
+
+## 1.3.0-test3 — 2026-10-18 (test build)
+
+Everything in test2, plus **the VR settings menu in the game's own look**:
+
+- **The game's frames:** the panel, rows and buttons use the game's own outline boxes (the ones its crafting panel is
+  made of), with its pale-blue glow around the panel. The panel is see-through like the game's menus: the scene
+  shows dimly behind it.
+- **Tab icons** in the game's pixel style and colours.
+- **A round VR button** in the pause menu, matching the game's three, on the same arc beside the gear.
+- **The Controls page is a picture of your controllers:** each button's action sits beside it, with a line to where
+  it is on the controller. Point at one to read it; click it to choose another action from a list of all of them
+  (the default is marked). Laser and beam settings and the minigame hand offsets are under *More settings*.
+
 ## 1.3.0-test2 — 2026-10-18 (test build)
 
 Everything in test1, plus **first-person comfort** (VR settings › *Comfort*):
