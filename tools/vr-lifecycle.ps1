@@ -4,7 +4,12 @@
 #   tools/vr-lifecycle.ps1            all scenarios; exit code = number of failures
 #   tools/vr-lifecycle.ps1 -Only input
 #
-# Scenarios (each a fresh game, seed 1234, diorama):
+# Scenarios (seed 1234, diorama unless noted). Each session ends by ending the VR session on purpose, so it needs its
+# own game; the imgui checks ride along (starting the game is most of the time):
+#   session 1 (--cvr-dbg-imgui): imgui (diorama), then input, ending with the session lost
+#   session 2: heading, ending with the session exiting
+#   session 3 (--cvr-dbg-throw, --cvr-dbg-imgui, first person, --cvr-dbg-clone): faults, then imgui (first person),
+#   ending with the instance lost
 #   input    held keys release when the frame does not render (head tracking invalid; not-focused with VDXR's
 #            "no render" model), a control held across focus regain waits for a release, controller dropouts are
 #            held for a moment then dropped, a runtime recenter re-anchors, a lost session stops VR cleanly
@@ -23,6 +28,7 @@ $bepinexLog = Join-Path $root "Working\game-dev\BepInEx\LogOutput.log"
 $log = $bepinexLog   # switched to the run's Unity player log by Start-Game
 $bridgeLog = Join-Path $root "Working\game-dev\BepInEx\CasualtyVR-bridge.log"
 $results = New-Object System.Collections.Generic.List[object]
+$startedAt = Get-Date
 
 function C([string[]]$c) { & "$t\xrsim-cmd.ps1" -Dir $d -Quiet @c | Out-Null }
 function Has([string]$pattern) { (Test-Path $log) -and (Select-String -Path $log -Pattern $pattern -Quiet) }
@@ -87,47 +93,63 @@ function Check-NoExceptions([string]$name, [string]$except = "") {
 }
 function Want([string]$s) { $Only.Count -eq 0 -or $Only -contains $s }
 
-if (Want "input") {
-    $ready = Start-Game @()
-    Check "input: game ready" $ready "verbose input line with a body"
-    Check "input: frame pacing by the runtime" (Has "Frame pacing: the OpenXR runtime") "Frame pacing: the OpenXR runtime"
+if ((Want "input") -or (Want "imgui")) {
+    $ready = Start-Game @("--cvr-dbg-imgui")
+    if (Want "imgui") {
+        # Mods' OnGUI windows (ImguiCapture): a test window from the probe (--cvr-dbg-imgui) in the middle of the screen.
+        Check "imgui: game ready" $ready ""
+        Check "imgui: windows repaint into the capture" (Wait-For "IMGUI test: repaints into 'CasualtyVR.ImguiTexture'" 30) "IMGUI test: repaints into the capture texture"
+        C @("hand r point 15 22"); Start-Sleep 2
+        Check "imgui: laser hovers the window (diorama)" (Wait-For "IMGUI test: pointer inside the window" 5) "IMGUI test: pointer inside the window"
+        C @("trigger r pull 300"); Start-Sleep 1.5
+        C @("trigger r pull 300"); Start-Sleep 1.5
+        Check "imgui: laser clicks reach the window (diorama)" (Wait-For "IMGUI test: button clicked \(2\)" 5) "IMGUI test: button clicked (2)"
+        # The pointer messages move Unity's own mouse: that must not count as the player taking the real mouse.
+        $last = Held | Out-Null; $line = (Select-String -Path $log -Pattern "input: laser" | Select-Object -Last 1).Line
+        Check "imgui: the laser keeps the pointer" ($line -match "laser=on") ([regex]::Match($line, 'laser=\S+').Value)
+        & "$t\xrsim-shot.ps1" -Dir $d -Out (Join-Path $root "Working\lifecycle-imgui") -Quiet | Out-Null
+        C @("hand r point 0 0"); Start-Sleep 1
+    }
+    if (Want "input") {
+        Check "input: game ready" $ready "verbose input line with a body"
+        Check "input: frame pacing by the runtime" (Has "Frame pacing: the OpenXR runtime") "Frame pacing: the OpenXR runtime"
 
-    # 1. Head tracking invalid (no rendered frame) while a stick is held, then released: the key must release.
-    C @("stick l 1 0"); $h1 = Held
-    C @("head valid off"); Start-Sleep 1
-    C @("stick l center"); Start-Sleep 1; $h2 = Held
-    C @("head valid on"); Start-Sleep 1
-    Check "input: stick walks" ($h1 -ne "") "held=[$h1]"
-    Check "input: release reaches the game while not rendering" ($h2 -eq "") "held=[$h2] after release with head tracking off"
+        # 1. Head tracking invalid (no rendered frame) while a stick is held, then released: the key must release.
+        C @("stick l 1 0"); $h1 = Held
+        C @("head valid off"); Start-Sleep 1
+        C @("stick l center"); Start-Sleep 1; $h2 = Held
+        C @("head valid on"); Start-Sleep 1
+        Check "input: stick walks" ($h1 -ne "") "held=[$h1]"
+        Check "input: release reaches the game while not rendering" ($h2 -eq "") "held=[$h2] after release with head tracking off"
 
-    # 2. VDXR model: not focused = no rendering. Focus loss releases; a control held across regain waits for release.
-    C @("focus norender on", "stick l 1 0"); $h3 = Held
-    C @("focus lose"); Start-Sleep 1; $h4 = Held
-    C @("focus regain"); Start-Sleep 1; $h5 = Held
-    Check "input: focus loss releases (no rendering)" ($h3 -ne "" -and $h4 -eq "") "held=[$h3] -> [$h4]"
-    Check "input: held across regain is ignored" ($h5 -eq "" -and (Has "focus regained with \[.*L\.stickRight")) "held=[$h5]"
-    C @("stick l center"); Start-Sleep 1
-    C @("stick l 1 0"); $h6 = Held
-    Check "input: works again after a release" ($h6 -ne "") "held=[$h6]"
-    C @("stick l center", "focus norender off")
+        # 2. VDXR model: not focused = no rendering. Focus loss releases; a control held across regain waits for release.
+        C @("focus norender on", "stick l 1 0"); $h3 = Held
+        C @("focus lose"); Start-Sleep 1; $h4 = Held
+        C @("focus regain"); Start-Sleep 1; $h5 = Held
+        Check "input: focus loss releases (no rendering)" ($h3 -ne "" -and $h4 -eq "") "held=[$h3] -> [$h4]"
+        Check "input: held across regain is ignored" ($h5 -eq "" -and (Has "focus regained with \[.*L\.stickRight")) "held=[$h5]"
+        C @("stick l center"); Start-Sleep 1
+        C @("stick l 1 0"); $h6 = Held
+        Check "input: works again after a release" ($h6 -ne "") "held=[$h6]"
+        C @("stick l center", "focus norender off")
 
-    # 3. Controller dropout: held for 0.5 s, then dropped; back when tracked.
-    C @("hand r valid off"); Start-Sleep 2
-    C @("hand r valid on"); Start-Sleep 2
-    Check "input: dropout held, then dropped, then back" ((Has "controller right: tracking lost, holding the last pose") -and (Has "controller right: pose lost") -and (Has "controller right: tracked again")) "[bridge] controller right: ..."
+        # 3. Controller dropout: held for 0.5 s, then dropped; back when tracked.
+        C @("hand r valid off"); Start-Sleep 2
+        C @("hand r valid on"); Start-Sleep 2
+        Check "input: dropout held, then dropped, then back" ((Has "controller right: tracking lost, holding the last pose") -and (Has "controller right: pose lost") -and (Has "controller right: tracked again")) "[bridge] controller right: ..."
 
-    # 4. Runtime recenter (xr-sim moves LOCAL onto the head and sends REFERENCE_SPACE_CHANGE_PENDING).
-    C @("head pos 0.4 1.5 0.3", "head rot 50 0 0"); Start-Sleep 1
-    C @("recenter")
-    Check "input: runtime recenter re-anchors" (Wait-For "Recentered \(runtime\)" 5) "Recentered (runtime): ..."
-    C @("head rot 0 0 0")
+        # 4. Runtime recenter (xr-sim moves LOCAL onto the head and sends REFERENCE_SPACE_CHANGE_PENDING).
+        C @("head pos 0.4 1.5 0.3", "head rot 50 0 0"); Start-Sleep 1
+        C @("recenter")
+        Check "input: runtime recenter re-anchors" (Wait-For "Recentered \(runtime\)" 5) "Recentered (runtime): ..."
+        C @("head rot 0 0 0")
 
-    Check "input: bridge log file" ((Test-Path $bridgeLog) -and (Select-String -Path $bridgeLog -Pattern "init ok" -Quiet) -and (Select-String -Path $bridgeLog -Pattern "Reference space change pending" -Quiet)) $bridgeLog
-
+        Check "input: bridge log file" ((Test-Path $bridgeLog) -and (Select-String -Path $bridgeLog -Pattern "init ok" -Quiet) -and (Select-String -Path $bridgeLog -Pattern "Reference space change pending" -Quiet)) $bridgeLog
+    }
     # 5. Session lost.
     C @("state lost")
-    Check-Stopped "input: session lost"
-    Check-NoExceptions "input"
+    if (Want "input") { Check-Stopped "input: session lost" }
+    Check-NoExceptions $(if (Want "input") { "input" } else { "imgui" })
 }
 
 if (Want "heading") {
@@ -150,52 +172,36 @@ if (Want "heading") {
     Check-NoExceptions "heading"
 }
 
-if (Want "faults") {
-    $ready = Start-Game @("--cvr-dbg-throw", "28")
+if ((Want "faults") -or (Want "imgui")) {
+    $ready = Start-Game @("--cvr-dbg-throw", "28", "--cvr-dbg-imgui", "--cvr-dbg-fp", "--cvr-dbg-clone")
     Check "faults: game ready" $ready ""
-    $failed = Wait-For "VR feature 'debug hooks' failed" 40
-    Check "faults: the failing feature is turned off" $failed "VR feature 'debug hooks' failed and is off ..."
-    Check "faults: reported once" ((Count "VR feature 'debug hooks' failed") -eq 1) "one error line"
-    $s1 = [int64][regex]::Match((Select-String -Path $log -Pattern "perf: .*submitted" | Select-Object -Last 1).Line, 'submitted (\d+)').Groups[1].Value
-    Start-Sleep 5
-    $s2 = [int64][regex]::Match((Select-String -Path $log -Pattern "perf: .*submitted" | Select-Object -Last 1).Line, 'submitted (\d+)').Groups[1].Value
-    Check "faults: VR keeps submitting" ($s2 -gt $s1 + 200) "submitted $s1 -> $s2"
+    if (Want "faults") {
+        $failed = Wait-For "VR feature 'debug hooks' failed" 40
+        Check "faults: the failing feature is turned off" $failed "VR feature 'debug hooks' failed and is off ..."
+        Check "faults: reported once" ((Count "VR feature 'debug hooks' failed") -eq 1) "one error line"
+        $s1 = [int64][regex]::Match((Select-String -Path $log -Pattern "perf: .*submitted" | Select-Object -Last 1).Line, 'submitted (\d+)').Groups[1].Value
+        Start-Sleep 5
+        $s2 = [int64][regex]::Match((Select-String -Path $log -Pattern "perf: .*submitted" | Select-Object -Last 1).Line, 'submitted (\d+)').Groups[1].Value
+        Check "faults: VR keeps submitting" ($s2 -gt $s1 + 200) "submitted $s1 -> $s2"
+    }
+    if (Want "imgui") {
+        # First person: the window is on the HUD panel in front of you; pointing at it takes the laser off the world.
+        C @("hand r point 10 10"); Start-Sleep 1
+        $n = Count "input: laser"
+        $deadline = (Get-Date).AddSeconds(8)
+        while ((Get-Date) -lt $deadline -and (Count "input: laser") -le $n + 1) { Start-Sleep -Milliseconds 300 }
+        Check "imgui fp: pointing at the window uses it" (((Select-String -Path $log -Pattern "input: laser" | Select-Object -Last 1).Line) -match "modWindow=True") "modWindow=True"
+        C @("trigger r pull 300"); Start-Sleep 1.5
+        Check "imgui fp: click reaches the window" (Wait-For "IMGUI test: button clicked \(1\)" 5) "IMGUI test: button clicked (1)"
+        # Co-op-style name tag and status icon on a copy of the character (--cvr-dbg-clone): found for first person.
+        Check "imgui fp: name tag and icon found" (Wait-For "WorldText: 1 name tags, 1 status icons" 10) "WorldText: 1 name tags, 1 status icons on other characters"
+    }
     C @("instanceloss")
-    Check-Stopped "faults: instance loss"
-    Check-NoExceptions "faults" "cvr-dbg-throw test exception|VR feature 'debug hooks' failed|at CasualtyVR\.|at \(wrapper"
-}
-if (Want "imgui") {
-    # Mods' OnGUI windows (ImguiCapture): a test window from the probe (--cvr-dbg-imgui) in the middle of the screen.
-    $ready = Start-Game @("--cvr-dbg-imgui")
-    Check "imgui: game ready" $ready ""
-    Check "imgui: windows repaint into the capture" (Wait-For "IMGUI test: repaints into 'CasualtyVR.ImguiTexture'" 30) "IMGUI test: repaints into the capture texture"
-    C @("hand r point 15 22"); Start-Sleep 2
-    Check "imgui: laser hovers the window (diorama)" (Wait-For "IMGUI test: pointer inside the window" 5) "IMGUI test: pointer inside the window"
-    C @("trigger r pull 300"); Start-Sleep 1.5
-    C @("trigger r pull 300"); Start-Sleep 1.5
-    Check "imgui: laser clicks reach the window (diorama)" (Wait-For "IMGUI test: button clicked \(2\)" 5) "IMGUI test: button clicked (2)"
-    # The pointer messages move Unity's own mouse: that must not count as the player taking the real mouse.
-    $last = Held | Out-Null; $line = (Select-String -Path $log -Pattern "input: laser" | Select-Object -Last 1).Line
-    Check "imgui: the laser keeps the pointer" ($line -match "laser=on") ([regex]::Match($line, 'laser=\S+').Value)
-    & "$t\xrsim-shot.ps1" -Dir $d -Out (Join-Path $root "Working\lifecycle-imgui") -Quiet | Out-Null
-    Check-NoExceptions "imgui"
-
-    # First person: the window is on the HUD panel in front of you; pointing at it takes the laser off the world.
-    $ready = Start-Game @("--cvr-dbg-imgui", "--cvr-dbg-fp", "--cvr-dbg-clone")
-    Check "imgui fp: game ready" $ready ""
-    C @("hand r point 10 10"); Start-Sleep 1
-    $n = Count "input: laser"
-    $deadline = (Get-Date).AddSeconds(8)
-    while ((Get-Date) -lt $deadline -and (Count "input: laser") -le $n + 1) { Start-Sleep -Milliseconds 300 }
-    Check "imgui fp: pointing at the window uses it" (((Select-String -Path $log -Pattern "input: laser" | Select-Object -Last 1).Line) -match "modWindow=True") "modWindow=True"
-    C @("trigger r pull 300"); Start-Sleep 1.5
-    Check "imgui fp: click reaches the window" (Wait-For "IMGUI test: button clicked \(1\)" 5) "IMGUI test: button clicked (1)"
-    # Co-op-style name tag and status icon on a copy of the character (--cvr-dbg-clone): found for first person.
-    Check "imgui fp: name tag and icon found" (Wait-For "WorldText: 1 name tags, 1 status icons" 10) "WorldText: 1 name tags, 1 status icons on other characters"
-    Check-NoExceptions "imgui fp"
+    if (Want "faults") { Check-Stopped "faults: instance loss" }
+    Check-NoExceptions $(if (Want "faults") { "faults" } else { "imgui fp" }) "cvr-dbg-throw test exception|VR feature 'debug hooks' failed|at CasualtyVR\.|at \(wrapper"
 }
 Stop-Game
 $results | Format-Table -AutoSize | Out-String -Width 200 | Write-Host
 $fails = @($results | Where-Object { $_.Result -eq "FAIL" }).Count
-Write-Host "$($results.Count - $fails)/$($results.Count) passed"
+Write-Host "$($results.Count - $fails)/$($results.Count) passed in $([int]((Get-Date) - $startedAt).TotalSeconds) s"
 exit $fails

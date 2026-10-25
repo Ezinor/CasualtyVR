@@ -1008,9 +1008,12 @@ namespace CasualtyVR
                     list.Add(Choice("Aim with", Plugin.FpAimWith, ("Hand", "Hand"), ("Head", "Head")));
                     list.Add(Choice("Grab", Plugin.FpGrabMode, ("Hold", "Hold grip"), ("Toggle", "Toggle")));
                     list.Add(Switch("Swing to attack", Plugin.FpSwingAttack));
-                    list.Add(Switch("Touch minigames", Plugin.FpMinigameTouch));
+                    list.Add(Switch("Distance pull", Plugin.FpDistancePull));
+                    list.Add(Switch("Hand on what you can grab", Plugin.FpGrabGlow));
                     list.Add(OptSlider("Vibration", Plugin.Haptics, Plugin.HapticStrength, 0.1f, 1f, 0.1f, v => $"{v * 100f:F0}%"));
-                    list.Add(OptSlider("Controller hands (diorama)", Plugin.ShowHands, Plugin.HandSize, 0.03f, 0.3f, 0.01f, v => $"{v * 100f:F0} cm"));
+                    list.Add(Switch("Hand poses", Plugin.FpHandPoses, more: true));
+                    list.Add(Switch("Touch minigames", Plugin.FpMinigameTouch, more: true));
+                    list.Add(OptSlider("Controller hands (diorama)", Plugin.ShowHands, Plugin.HandSize, 0.03f, 0.3f, 0.01f, v => $"{v * 100f:F0} cm", more: true));
                     list.Add(OptSlider("Your arms (thickness)", Plugin.FpArms, Plugin.FpArmThickness, 0.1f, 2f, 0.1f, v => $"{v:F1}×", more: true));
                     list.Add(OptSlider("Your body (thickness)", Plugin.FpBody, Plugin.FpBodyDepth, 0.2f, 2f, 0.1f, v => $"{v:F1}×", more: true));
                     list.Add(Slider("Body behind your eyes", Plugin.FpBodyBack, -0.2f, 1f, 0.05f, v => $"{v * 100f:F0} cm", more: true));

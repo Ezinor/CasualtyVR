@@ -1,5 +1,46 @@
 # Changelog
 
+## 1.3.0-test12 — 2026-10-24 (test build)
+
+- **The laser clicks menus even when the game window is not in front** (for example with Virtual Desktop, or another
+  app focused on the desktop). Before, the VR menu and the game's own menus ignored laser clicks until the game
+  window was focused again.
+- **An empty hand at your chest always opens the inventory.** If the controller happened to point at an item
+  further off, the grip locked that item for a distance pull instead.
+
+## 1.3.0-test11 — 2026-10-24 (test build)
+
+After your headset pass of test10:
+
+- **The hands point where the controller points:** held level, your fingers point forward, the thumb sits up the
+  handle and the hand wraps around the controller. In test10 they followed the handle and stood straight up.
+- **Your character's hands:** three fingers and a thumb, with claws (also on the glowing hand on items).
+
+## 1.3.0-test10 — 2026-10-24 (test build)
+
+After your headset pass of test9:
+
+- **New hands:** your empty hands are now small blocky 3D hands in the game's style, a hand's size, held the way
+  you hold the controller (thumb on top). They use the same shading and skin colour as your arms. The test9 hands
+  were the minigames' large flat drawings and looked nothing like the arms.
+- **A glowing hand instead of the glow:** what you can grab shows a softly glowing hand on it (open while it is in
+  reach or pointed at, a fist once you have locked it for a pull). The item itself no longer glows. The setting is
+  now *Hand on what you can grab*.
+
+## 1.3.0-test9 — 2026-10-23 (test build)
+
+**Hands in first person** (part two):
+
+- **Your empty hands move with the controller:** open, half-closed when something is within reach, a fist when you
+  grip, pointing when you rest a finger on the trigger and pressing when you pull it. They are the game's own hand
+  art in your character's skin colour. Holding something, or wearing something on the hand, keeps the character's
+  own hand.
+- **What your hand would take glows faintly**, and the controller ticks once when something comes within reach.
+  The hand half-closes too.
+- **Distance pull:** point at a loose item further off (up to the game's own reach of 10 blocks, and in sight): it
+  glows. Grip to lock it, then flick your hand towards you and it lands in your hand.
+- New rows on *Hands & body*: *Distance pull* and *Glow on what you can grab*; under *More settings*, *Hand poses*.
+
 ## 1.3.0-test8 — 2026-10-23 (test build)
 
 **Hands in first person** (part one):

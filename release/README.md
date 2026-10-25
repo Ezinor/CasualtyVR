@@ -115,7 +115,8 @@ The right controller is the character's active hand, and the left is the other h
 
 | Gesture | Action |
 |---|---|
-| Grip near an item | Pick it up into that hand |
+| Grip near an item | Pick it up into that hand (a glowing hand shows on it and the controller ticks when it is within reach) |
+| Point at an item further off, grip, then flick your hand towards you | Pull it into your hand (in sight, within 10 blocks) |
 | Grip near a crate, door or machine | Use it |
 | Grip near a rope or ladder, then pull down | Climb, hand over hand |
 | Let go (slowly / while moving) | Drop / throw, harder the faster your hand moves, from where your hand is |
@@ -155,8 +156,9 @@ finger) is exactly where it acts.
   - View distance; tunnel width and world scale under *More settings*.
 - *Hands & body* tab:
   - *Character looks where you look*, and *Aim with* hand or head.
-  - Grab mode (hold the grip, or toggle), swing to attack, touch minigames, vibration (on/off and strength).
-  - Under *More settings*: your arms and your body (each on/off and a thickness), and how far behind your eyes the
+  - Grab mode (hold the grip, or toggle), swing to attack, distance pull, the hand on what you can grab, vibration
+    (on/off and strength).
+  - Under *More settings*: hand poses, touch minigames, your arms and your body (each on/off and a thickness), and how far behind your eyes the
     body sits.
 
 The both-grips ragdoll control is off in first person, because the grips are your hands; bind ragdoll to another

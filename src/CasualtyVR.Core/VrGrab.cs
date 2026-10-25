@@ -1,4 +1,6 @@
+using System.Collections.Generic;
 using UnityEngine;
+using UnityEngine.Rendering;
 
 namespace CasualtyVR
 {
@@ -16,6 +18,11 @@ namespace CasualtyVR
     /// Hand motion is measured in room space (playbook INPUT-010), so walking does not count as a swing or throw.
     /// Phase 4a: everything is at the grip pose (where the hand holds things); swings and throws follow the recipes in
     /// HandMotion (re-armed swings, gated by what the hand holds; grip-drop release, peak velocity, thrown from your hand).
+    /// Phase 4b (FP 9b, 9c, 9g): the empty hand's pose follows the controller (open, half-closed near something it could
+    /// take, fist, pointing); within reach of something the hand half-closes, ticks once and a glowing hand marks the grab target,
+    /// and the grip then takes exactly that. Further off, pointing at a loose item the game would let you pick up (in sight,
+    /// under 10 blocks: Body.DoPickupCheck) selects it; the grip locks it and a flick towards you pulls it into the hand
+    /// through the game's own pickup (Half-Life: Alyx's select, lock, pull).
     /// Grab mode Hold: keep the grip to keep holding (default); Toggle: press to grab, press again to let go.
     /// </summary>
     internal static class VrGrab
@@ -25,11 +32,21 @@ namespace CasualtyVR
         public const float ThrowSpeedM = 1.4f;       // m/s of hand speed to throw instead of drop
         private const float FullThrowSpeedM = 4.5f;  // m/s for full force
 
+        private const float PullSpeedM = 1.5f;       // m/s of hand speed towards you to pull a locked item
+        private const float PullConeDeg = 6f;         // how close to the laser an item must be to be selected
+
         private sealed class HandState
         {
             public bool Grip, Toggled, Fallback, Climbing;
             public float MouthTime;
             public readonly HandMotion Motion = new HandMotion();
+            // Phase 4b: what the open, empty hand would take (near: in reach; far: pointed at, for the distance pull).
+            public Item NearItem, FarItem, Pulling;
+            public Object Hover;
+            public bool HoverNear;
+            public float Trigger;
+            public int FarFrame;
+            public HandPose Pose = HandPose.Own;
         }
 
         private static readonly HandState[] hands = { new HandState(), new HandState() };
@@ -39,6 +56,9 @@ namespace CasualtyVR
         private static int climbHand = -1;
         public static bool Active { get; private set; }
 
+        /// <summary>The pose hand h (0 left, 1 right) shows in first person (VrArms).</summary>
+        public static HandPose PoseFor(int h) => Active ? hands[h].Pose : HandPose.Own;
+
         /// <summary>Once per frame after VrInput.Update, while first person is on.</summary>
         public static void Update(Body body, bool menuOpen)
         {
@@ -47,7 +67,8 @@ namespace CasualtyVR
             for (int h = 0; h < 2; h++)
             {
                 var st = hands[h];
-                if (!VrInput.GripTracking(h, out Vector3 roomPos, out _, out float grip, out _))
+                st.Pose = HandPose.Own;
+                if (!VrInput.GripTracking(h, out Vector3 roomPos, out _, out float grip, out st.Trigger))
                 {
                     st.Motion.Reset();
                     st.Grip = false;
@@ -67,15 +88,27 @@ namespace CasualtyVR
                 if (!Active || slot < 0) continue;
                 VrInput.GripPose(h, out Vector3 handPos, out _);
                 bool toggle = Plugin.FpGrabMode.Value == "Toggle";
+                // The grab affordance and the distance pull (FP 9c, 9g): what the open, empty hand would take.
+                if (!holding && !gripNow && !st.Climbing) Hover(body, h, st, handPos);
+                else if (holding) { st.Hover = null; st.NearItem = st.FarItem = null; }
                 if (pressed)
                 {
                     if (body.HoldingItem(slot))
                     {
                         if (toggle) st.Toggled = true;    // second press: let go on release
                     }
-                    else if (!Grab(body, slot, handPos, h)) st.Fallback = h == 1;
+                    else if (st.FarItem != null && st.Hover == st.FarItem)
+                    {
+                        // Alyx: the grip locks the pointed-at item; a flick towards you pulls it (Pull).
+                        st.Pulling = st.FarItem;
+                        VrHaptics.Pulse(h, 0.3f, 0.03f);
+                        if (Plugin.Verbose) Plugin.Log.LogInfo($"Grab: hand {h} locked onto {st.Pulling.name} for a pull ({Vector2.Distance(body.transform.position, st.Pulling.transform.position):F1} blocks)");
+                    }
+                    else if (!Grab(body, slot, handPos, h, st.NearItem)) st.Fallback = h == 1;
                     else st.Toggled = false;
                 }
+                if (!gripNow) st.Pulling = null;
+                else if (st.Pulling != null) Pull(body, slot, h, st);
                 // Right grip with nothing in reach: the game's own right-click at the aim point, held while the grip is.
                 if (!gripNow) { st.Fallback = false; st.Climbing = false; }
                 if (st.Climbing) Climb(body, st, h);
@@ -88,7 +121,12 @@ namespace CasualtyVR
                     if (st.Motion.Cancel() && Plugin.Verbose) Plugin.Log.LogInfo("Grab: swing cancelled, the grip let go (a throw)");
                     LetGo(body, slot, handPos, st.Motion.PeakVelocity());
                 }
+                // The hand's pose (FP 9b): holding something keeps the character's own hand.
+                st.Pose = body.HoldingItem(slot) ? HandPose.Own : gripNow ? HandPose.Fist
+                    : st.Trigger > 0.9f ? HandPose.PointPress : st.Trigger > 0.5f ? HandPose.Point
+                    : st.Hover != null ? HandPose.Half : HandPose.Open;
             }
+            if (Active && DbgPullAim && Time.unscaledTime >= nextPullAimLog) LogPullAim(body);
             if (Active && Plugin.FpSwingAttack.Value) Swing(body);
             else hands[1].Motion.Cancel();
         }
@@ -134,7 +172,235 @@ namespace CasualtyVR
 
         private static bool AtChest(Vector3 handPos) => (handPos - Chest()).magnitude < ChestRadiusM * VrSpace.Scale;
 
-        private static bool Grab(Body body, int slot, Vector3 handPos, int h)
+        // ---- the grab affordance and the distance pull (Phase 4b) ------------------------------------------------
+
+        private static void Hover(Body body, int h, HandState st, Vector3 handPos)
+        {
+            st.NearItem = NearItem(body, handPos);
+            Object near = st.NearItem != null ? st.NearItem : NearOther(body, handPos);
+            // At the chest the grip opens the inventory: no pull selection there, wherever the laser happens to point
+            // (it locked a bottle across the room instead, 2026-10-24).
+            if (near != null || !Plugin.FpDistancePull.Value || AtChest(handPos)) st.FarItem = null;
+            else if (Time.frameCount - st.FarFrame >= 3 || (st.FarItem != null && !Loose(body, st.FarItem)))
+            {
+                st.FarFrame = Time.frameCount;
+                st.FarItem = FarItem(body, h);
+            }
+            Object hover = near != null ? near : st.FarItem;
+            if (hover == st.Hover) return;
+            st.Hover = hover;
+            st.HoverNear = near != null;
+            if (hover == null) return;
+            // One light tick when something comes within reach or under the laser (playbook ch. 02: an invisible zone needs
+            // a discoverability channel; with the hand pose and the glow, three of them).
+            VrHaptics.Pulse(h, 0.15f, 0.015f);
+            if (Plugin.Verbose) Plugin.Log.LogInfo($"Grab: hand {h} {(st.HoverNear ? "within reach of" : "pointing at")} {hover.name}");
+        }
+
+        private static bool Loose(Body body, Item item) => item != null && item.transform.parent == null && !body.HoldingItem(item) && item.gameObject.activeInHierarchy;
+
+        /// <summary>The nearest loose item within the hand's reach (the grab's own choice).</summary>
+        private static Item NearItem(Body body, Vector2 at)
+        {
+            Item best = null;
+            float bestD = float.MaxValue;
+            foreach (var c in Physics2D.OverlapCircleAll(at, GrabRadius, LayerMask.GetMask("Item")))
+            {
+                if (!c.TryGetComponent<Item>(out var item) || body.HoldingItem(item) || item.transform.IsChildOf(body.transform)) continue;
+                float d = ((Vector2)c.bounds.ClosestPoint(at) - at).sqrMagnitude;
+                if (d < bestD) { bestD = d; best = item; }
+            }
+            return best;
+        }
+
+        /// <summary>A rope or ladder, or a machine, crate or door, within the hand's reach (for the tick and the pose).</summary>
+        private static Object NearOther(Body body, Vector2 at)
+        {
+            var climbable = Climbable.GetClosestClimbable(body.transform.position);
+            if (climbable != null && climbable.GetGrabInfo(at).distanceToPlayer < GrabRadius) return climbable;
+            foreach (var c in Physics2D.OverlapCircleAll(at, GrabRadius))
+            {
+                var usable = c.GetComponentInParent<UsableObject>();
+                if (usable != null && Vector2.Distance(body.transform.position, usable.transform.position) < 10f * usable.rangeMultiplier) return usable;
+            }
+            return null;
+        }
+
+        /// <summary>
+        /// The loose item closest to the hand's laser (within 6 degrees, or 0.6 blocks off it close up) that the game itself
+        /// would let you pick up: in sight and under 10 blocks (Body.DoPickupCheck, without its alerts).
+        /// </summary>
+        private static Item FarItem(Body body, int h)
+        {
+            if (!VrInput.HandPose(h, out Vector3 origin, out Vector3 dir, out _, out _)) return null;
+            Item best = null;
+            float bestScore = float.MaxValue;
+            foreach (var c in Physics2D.OverlapCircleAll(body.transform.position, Body.interactionRange, LayerMask.GetMask("Item")))
+            {
+                if (!c.TryGetComponent<Item>(out var item) || !Loose(body, item) || item.transform.IsChildOf(body.transform)) continue;
+                Vector3 centre = c.bounds.center;
+                centre.z = FirstPerson.EyeZ;
+                Vector3 to = centre - origin;
+                float dist = to.magnitude;
+                if (dist < GrabRadius) continue;   // in reach: the ordinary grab
+                float ang = Vector3.Angle(dir, to);
+                float tol = Mathf.Max(PullConeDeg, Mathf.Atan2(0.6f, dist) * Mathf.Rad2Deg);
+                if (ang > tol || ang >= bestScore) continue;
+                if (!body.DoPickupCheck(item, noAlerts: true)) continue;
+                bestScore = ang;
+                best = item;
+            }
+            return best;
+        }
+
+        /// <summary>A locked item comes to the hand when the hand flicks towards you (the game's own pickup, its rules).</summary>
+        private static void Pull(Body body, int slot, int h, HandState st)
+        {
+            var item = st.Pulling;
+            if (!Loose(body, item)) { st.Pulling = null; return; }
+            if (!VrInput.GripTracking(h, out Vector3 handRoom, out _, out _, out _)) return;
+            Vector3 toward = VrSpace.HeadTrackingPos - handRoom;
+            if (toward.sqrMagnitude < 1e-4f) return;
+            float speed = Vector3.Dot(st.Motion.Velocity(), toward.normalized);
+            if (speed < PullSpeedM) return;
+            float dist = Vector2.Distance(body.transform.position, item.transform.position);
+            body.PickUpItem(item, slot);
+            bool ok = body.HoldingItem(item);
+            if (Plugin.Verbose) Plugin.Log.LogInfo($"Grab: pulled {item.name} from {dist:F1} blocks at {speed:F1} m/s: {(ok ? "in hand" : "refused by the game")}");
+            if (ok)
+            {
+                VrHaptics.Pulse(h, 0.5f, 0.06f);
+                PlayerCamera.main?.PlayBackpackSound();
+            }
+            st.Pulling = null;
+            st.Hover = null;
+            st.FarItem = null;
+        }
+
+        // ---- the faint glow on what the hand would take (decision D5) ---------------------------------------------
+
+        private static Material glowMat;
+        private static readonly Dictionary<Sprite, Mesh> spriteMeshes = new Dictionary<Sprite, Mesh>();
+        private static readonly MaterialPropertyBlock glowProps = new MaterialPropertyBlock();
+
+        /// <summary>
+        /// The item a hand would take, or has locked, shows a softly glowing hand on it: the open hand while it is in reach
+        /// or pointed at, the fist once locked for a pull, pulsing gently. Drawn additively, facing the eye, a little in front
+        /// of the item and larger with distance so it stays readable. The first version made the item itself glow (headset,
+        /// 1.3.0-test9: "not a big fan"). Called from VrUi.DrawInto in first person.
+        /// </summary>
+        public static int DrawGlow(CommandBuffer cmd)
+        {
+            if (!Active || !Plugin.FpGrabGlow.Value) return 0;
+            int n = 0;
+            for (int h = 0; h < 2; h++)
+            {
+                var st = hands[h];
+                Item item = st.Pulling != null ? st.Pulling : st.Hover as Item;
+                if (item == null || !item.gameObject.activeInHierarchy) continue;
+                if (!VisualCentre(item, out Vector3 centre)) continue;
+                var icon = HandPoses.Icon(st.Pulling != null ? HandPose.Fist : HandPose.Open);
+                if (icon == null) continue;
+                if (glowMat == null) glowMat = MakeGlowMaterial();
+                if (glowMat == null) return n;
+                float s = (st.Pulling != null ? 1f : st.HoverNear ? 0.8f : 0.6f) * (0.85f + 0.15f * Mathf.Sin(Time.unscaledTime * 4f));
+                Vector3 toEye = VrSpace.HeadPosition - centre;
+                float dist = toEye.magnitude;
+                if (dist < 1e-3f) continue;
+                toEye /= dist;
+                float scale = Mathf.Max(1e-3f, VrSpace.Scale);
+                float height = Mathf.Clamp(0.06f * dist / scale, 0.08f, 0.24f) * scale;   // 8-24 cm tall
+                Vector3 up = Vector3.ProjectOnPlane(Vector3.up, toEye);
+                if (up.sqrMagnitude < 1e-6f) up = Vector3.ProjectOnPlane(VrSpace.HeadForward, toEye);
+                up.Normalize();
+                Vector3 at = centre + toEye * Mathf.Min(0.4f, dist * 0.3f) - up * (height * 0.5f);
+                float k = height / Mathf.Max(1e-3f, icon.bounds.size.y);
+                var m = Matrix4x4.TRS(at, Quaternion.LookRotation(-toEye, up), new Vector3(h == 0 ? -k : k, k, k));
+                glowProps.Clear();
+                glowProps.SetTexture("_BaseMap", icon.texture);
+                glowProps.SetColor("_BaseColor", new Color(0.85f * s, 0.92f * s, 1f * s, 1f));
+                cmd.DrawMesh(SpriteMesh(icon), m, glowMat, 0, 0, glowProps);
+                n++;
+            }
+            return n;
+        }
+
+        // Where the eye sees an item: the bounds of its billboard copies in first person, else its own sprites.
+        private static bool VisualCentre(Item item, out Vector3 centre)
+        {
+            var copies = FirstPerson.BillboardCopies(item.transform);
+            IEnumerable<SpriteRenderer> rs = copies != null && copies.Count > 0 ? (IEnumerable<SpriteRenderer>)copies : item.GetComponentsInChildren<SpriteRenderer>();
+            Bounds b = default;
+            bool any = false;
+            foreach (var r in rs)
+            {
+                if (r == null || !r.enabled || !r.gameObject.activeInHierarchy || r.sprite == null) continue;
+                if (!any) { b = r.bounds; any = true; }
+                else b.Encapsulate(r.bounds);
+            }
+            centre = any ? b.center : Vector3.zero;
+            return any;
+        }
+
+        private static Material MakeGlowMaterial()
+        {
+            var shader = Shader.Find("Universal Render Pipeline/Particles/Unlit");
+            if (shader == null) return null;
+            var m = new Material(shader) { name = "CasualtyVR.GrabGlow", renderQueue = 3000 };
+            m.SetFloat("_Surface", 1f);
+            m.SetFloat("_Blend", 2f);   // additive
+            m.SetFloat("_SrcBlend", (float)BlendMode.One);
+            m.SetFloat("_DstBlend", (float)BlendMode.One);
+            m.SetFloat("_ZWrite", 0f);
+            m.SetFloat("_Cull", 0f);
+            m.EnableKeyword("_SURFACE_TYPE_TRANSPARENT");
+            return m;
+        }
+
+        private static Mesh SpriteMesh(Sprite sp)
+        {
+            if (spriteMeshes.TryGetValue(sp, out var mesh) && mesh != null) return mesh;
+            mesh = new Mesh { name = "CasualtyVR.Glow " + sp.name };
+            var v = sp.vertices;
+            var verts = new Vector3[v.Length];
+            for (int i = 0; i < v.Length; i++) verts[i] = v[i];
+            mesh.vertices = verts;
+            mesh.uv = sp.uv;
+            var t = sp.triangles;
+            var tris = new int[t.Length];
+            for (int i = 0; i < t.Length; i++) tris[i] = t[i];
+            mesh.triangles = tris;
+            mesh.RecalculateBounds();
+            spriteMeshes[sp] = mesh;
+            return mesh;
+        }
+
+        // Headless test (tools/fp-smoke.ps1 pull): --cvr-dbg-pull-aim logs, every 2 s, the xr-sim "hand r point" angles that
+        // point the right laser at the nearest loose item the game would let you pick up (xr-sim aims relative to the head:
+        // yaw left-positive, pitch up).
+        private static readonly bool DbgPullAim = System.Array.IndexOf(System.Environment.GetCommandLineArgs(), "--cvr-dbg-pull-aim") >= 0;
+        private static float nextPullAimLog;
+
+        private static void LogPullAim(Body body)
+        {
+            nextPullAimLog = Time.unscaledTime + 2f;
+            Item best = null;
+            float bestD = float.MaxValue;
+            foreach (var c in Physics2D.OverlapCircleAll(body.transform.position, Body.interactionRange, LayerMask.GetMask("Item")))
+            {
+                if (!c.TryGetComponent<Item>(out var item) || !Loose(body, item)) continue;
+                float d = Vector2.Distance(body.transform.position, c.bounds.center);
+                if (d > 2f && d < bestD && body.DoPickupCheck(item, noAlerts: true)) { bestD = d; best = item; }
+            }
+            if (best == null || !VrInput.HandTracking(1, out Vector3 hand, out _)) return;
+            Vector3 centre = best.GetComponent<Collider2D>().bounds.center;
+            centre.z = FirstPerson.EyeZ;
+            Vector3 d3 = Quaternion.Inverse(VrSpace.HeadTrackingRot) * (VrSpace.ToTracking(centre) - hand);
+            float yaw = Mathf.Atan2(-d3.x, d3.z) * Mathf.Rad2Deg, pitch = Mathf.Asin(d3.y / d3.magnitude) * Mathf.Rad2Deg;
+            Plugin.Log.LogInfo($"Grab test: pull aim '{best.name}': point {yaw:F2} {pitch:F2} ({bestD:F1} blocks)");
+        }
+
+        private static bool Grab(Body body, int slot, Vector3 handPos, int h, Item preferred = null)
         {
             var pc = PlayerCamera.main;
             if (AtChest(handPos))
@@ -144,16 +410,9 @@ namespace CasualtyVR
                 return true;
             }
             Vector2 at = handPos;
-            // Nearest loose item that is not the player's own.
-            Item best = null;
-            float bestD = float.MaxValue;
-            foreach (var c in Physics2D.OverlapCircleAll(at, GrabRadius, LayerMask.GetMask("Item")))
-            {
-                if (!c.TryGetComponent<Item>(out var item) || body.HoldingItem(item) || item.transform.IsChildOf(body.transform)) continue;
-                float d = ((Vector2)c.bounds.ClosestPoint(at) - at).sqrMagnitude;
-                if (d < bestD) { bestD = d; best = item; }
-            }
-            if (Plugin.Verbose) Plugin.Log.LogInfo($"Grab: hand {h} slot {slot} at {at} nearest item {(best != null ? best.name + " " + Mathf.Sqrt(bestD).ToString("F2") : "none")}");
+            // The item the hand was showing it would take (FP 9c: locked on), if it is still there; else the nearest.
+            Item best = preferred != null && Loose(body, preferred) ? preferred : NearItem(body, at);
+            if (Plugin.Verbose) Plugin.Log.LogInfo($"Grab: hand {h} slot {slot} at {at} item {(best != null ? best.name + (best == preferred ? " (the one shown)" : "") : "none")}");
             if (best != null)
             {
                 body.PickUpItem(best, slot);

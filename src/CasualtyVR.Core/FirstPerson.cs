@@ -465,6 +465,8 @@ namespace CasualtyVR
             return d.sqrMagnitude < 1e-4f ? Quaternion.identity : Quaternion.FromToRotation(Vector3.back, d.normalized);
         }
         public static int BillboardGroups => instance != null ? instance.billboards.GroupCount : 0;
+        /// <summary>The billboard copies drawn for an object (what the eye sees of it), or null (VrGrab's glow).</summary>
+        public static List<SpriteRenderer> BillboardCopies(Transform root) => instance != null && Active ? instance.billboards.CopiesFor(root) : null;
         public static bool FacingRightNow { get; private set; } = true;
         /// <summary>Verbose perf: milliseconds spent in first-person code this frame (update) and in the eye-render hooks.</summary>
         public static readonly System.Diagnostics.Stopwatch UpdateTime = new System.Diagnostics.Stopwatch(), RenderTime = new System.Diagnostics.Stopwatch();

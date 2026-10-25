@@ -32,6 +32,9 @@ Machine-specific notes, if any, are in `CLAUDE.local.md` (not in git).
   - Phase 4a, hands: grip pose in the bridge (`VrInput.GripPose`; rays stay on the aim pose), swing/throw recipes in `HandMotion.cs`,
     motion takes (`--cvr-dbg-replay <folder|synthetic>`, `tools/motion-takes.ps1 [-Takes <dir>]`): docs/PHASE4A_RECEIPT.md.
     fp-smoke `swing-gate` (`--cvr-dbg-spawn pistol|machete --cvr-dbg-hold`). fp-smoke reads the player log now.
+  - Phase 4b, hand poses (`HandPoses.cs`, `VrArms.PlacePose`), grab affordance and glow, distance pull (`VrGrab`):
+    docs/PHASE4B_RECEIPT.md. fp-smoke `affordance`, `pull`, `poses` (captures); `--cvr-dbg-pull-aim` logs the hand angles
+    that point at an item; `--cvr-dbg-dumphands` also saves the character's arm sprites and logs their tint and size.
 - Review plan: docs/IMPROVEMENT_PLAN.md (groups A–E). Group A (input/session lifecycle, recenter heading, fault isolation,
   bridge log `BepInEx/CasualtyVR-bridge.log`): docs/LIFECYCLE_RECEIPT.md, test `tools/vr-lifecycle.ps1` (xr-sim session states,
   focus, validity; flags `--cvr-dbg-recenter <s>`, `--cvr-dbg-throw <s>`). Read the Unity player log in tests, not LogOutput.log (buffered).
@@ -41,6 +44,7 @@ Machine-specific notes, if any, are in `CLAUDE.local.md` (not in git).
 - Release 1.2.0: docs/RELEASE_1.2.md; headsets/Proton: docs/COMPATIBILITY.md. Flags: `--cvr-dbg-lockpick` (with `--cvr-dbg-spawn dropcapsule`),
   `--cvr-dbg-fpoff <s>` (speed restore), `--cvr-dbg-settings all` (cycles tabs), `--cvr-dbg-dumphands` (logs full-rect tool tips: use those, not the trimmed PNGs).
   Smoke test: `tools/fp-smoke.ps1` (xr-sim head/hand scripts; flags `--cvr-dbg-fp`, `--cvr-dbg-cave`, `--cvr-dbg-spawn a,b`, `--cvr-dbg-hold`).
+  Scenarios share game sessions (5 launches, ~5 min); `-Quick` runs the hands and swing sessions only (~2 min): use it while iterating.
 - Never test VR start without `-XrSim` (it would start the developer's real OpenXR runtime); for no-runtime tests set
   `XR_RUNTIME_JSON` to a missing file for that process.
 
@@ -83,6 +87,10 @@ The repository holds no game files. Everything under `Working/` and `dist/` is l
 
 ## Tools
 
+- **Regression: `tools/regress.ps1`** runs every suite (fp-smoke, vr-menu, vr-lifecycle, fp-comfort, motion-takes,
+  xr-tape) with a timed summary, saves output to `Working/regress/` and restores the dev config. `-Quick` (5 launches)
+  while iterating; the full run before a test build. Suites share game sessions where they can (starting the game is
+  most of each run). Never run two suites at once: they share the game, xr-sim and the logs.
 - `tools/xr-sim` (simulated OpenXR runtime, `tools/run-with-xrsim.ps1`), `tools/xr-tape` (`tools/Invoke-XrTape.ps1 -Check`).
 - Builds: the native bridge (`src/CasualtyVR.XrBridge`, built by `tools/deploy-dev.ps1`) and xr-sim/xr-tape use CMake
   "Visual Studio 16 2019". The bridge links the CRT statically, so players need no Visual C++ runtime.

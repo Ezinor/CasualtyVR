@@ -38,6 +38,9 @@ namespace CasualtyVR
         public readonly HashSet<SpriteRenderer> Sources = new HashSet<SpriteRenderer>();
         public int GroupCount => groups.Count;
 
+        /// <summary>The copies drawn for a group's root (what you see of it in first person), or null.</summary>
+        public List<SpriteRenderer> CopiesFor(Transform root) => root != null && groups.TryGetValue(root, out var g) ? g.Copies : null;
+
         public Billboards()
         {
             root = new GameObject("CasualtyVR.Billboards") { hideFlags = HideFlags.DontSave };

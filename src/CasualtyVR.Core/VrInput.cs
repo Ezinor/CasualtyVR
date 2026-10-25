@@ -38,7 +38,12 @@ namespace CasualtyVR
             "left", "right", "up", "down", "toggleinventory", "woundview", "altview", "ragdoll", "expanddesc", "bark",
         };
 
-        public static bool Enabled;
+        public static bool Enabled
+        {
+            get => enabled;
+            set { enabled = value; if (!value) KeepUiFocus(false); }
+        }
+        private static bool enabled;
         public static bool LaserMode { get; private set; }
         public static Vector3 VirtualMouse { get; private set; }
         public static bool LaserHit { get; private set; }
@@ -179,6 +184,7 @@ namespace CasualtyVR
                 LaserVisible = false;
                 LaserMode = false;
                 wasFocused = false;
+                KeepUiFocus(false);
                 return;
             }
             Profile = input.profile ?? "";
@@ -245,6 +251,23 @@ namespace CasualtyVR
             }
 
             if (posesFresh && ui != null) UpdateLaser(Plugin.LaserHand.Value == "Left" ? left : right, ui, focus, seatedOrigin, unitsPerMetre);
+            KeepUiFocus(LaserMode);
+        }
+
+        // The menus must take the laser while the game window is not the focused desktop window (Virtual Desktop, another
+        // app in front): uGUI drops all pointer input then, because StandaloneInputModule.Process returns early when
+        // EventSystem.isFocused is false. While the laser drives the pointer the EventSystem counts as focused; with VR off
+        // or the real mouse in control it follows the window again. OS focus and the window are never touched.
+        private static readonly System.Reflection.FieldInfo eventSystemFocus = AccessTools.Field(typeof(UnityEngine.EventSystems.EventSystem), "m_HasFocus");
+        private static UnityEngine.EventSystems.EventSystem focusKept;
+
+        private static void KeepUiFocus(bool laser)
+        {
+            if (eventSystemFocus == null) return;
+            var es = laser && !Application.isFocused ? UnityEngine.EventSystems.EventSystem.current : null;
+            if (focusKept != null && focusKept != es) eventSystemFocus.SetValue(focusKept, Application.isFocused);
+            focusKept = es;
+            if (es != null && !es.isFocused) eventSystemFocus.SetValue(es, true);
         }
 
         // First person (FIRSTPERSON_PLAN.md): left stick forward/back walks along the way you face, right stick

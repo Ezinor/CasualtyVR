@@ -596,6 +596,8 @@ namespace CasualtyVR
                 if (ImguiCapture.Running && ImguiCapture.HasContent && ImguiCapture.Texture != null) { overlayCmd.DrawMesh(mesh, go.transform.localToWorldMatrix, imguiMaterial, 0, 0); drawn++; }
                 cursorPanel = go;
             }
+            // First person, outside menus: the faint glow on what a hand would take (Phase 4b), under the comfort overlays.
+            if (VrSpace.FirstPerson && !DashboardShown && !TheatreShown) drawn += VrGrab.DrawGlow(overlayCmd);
             drawn += FirstPerson.DrawOverlay(overlayCmd, eye);
             drawn += VrHands.Draw(overlayCmd, eye);
             // The OS cursor never reaches the headset: draw one where the mouse is on the active panel.

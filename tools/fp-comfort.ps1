@@ -4,14 +4,17 @@
 #   tools/fp-comfort.ps1             all scenarios; exit code = number of failures
 #   tools/fp-comfort.ps1 -Only wall
 #
-# Scenarios (each a fresh game, seed 1234, first person in the open test tunnel, --cvr-dbg-cave):
-#   wall     leaning 1 m sideways (xr-sim "head pos") puts the head past the tunnel's side: the view fades to black (an
-#            xr-sim capture shows it), and comes back when you straighten up
-#   blink    the Gentle preset (snap turning, snap blink): a right-stick flick turns with a blink
-#   scale    the first run measures and remembers the character's eye height; the next run starts with it (no
-#            resize after spawn)
-#   walk     a half push of the left stick walks at about the walking speed, a full push runs (speeds from the
-#            "fp path" lines)
+# Scenarios (seed 1234, first person in the open test tunnel, --cvr-dbg-cave), in two game sessions (starting the game
+# is most of the time):
+#   session 1, no remembered eye height:
+#     scale    the run measures and remembers the character's eye height
+#     wall     leaning 1 m sideways (xr-sim "head pos") puts the head past the tunnel's side: the view fades to black (an
+#              xr-sim capture shows it), and comes back when you straighten up
+#   session 2, the Gentle preset (snap turning, snap blink), the config session 1 left:
+#     scale    the run starts with the remembered eye height (no resize after spawn)
+#     blink    a right-stick flick turns with a blink
+#     walk     a half push of the left stick walks at about the walking speed, a full push runs (speeds from the
+#              "fp path" lines)
 [CmdletBinding()]
 param([string[]]$Only = @())
 $ErrorActionPreference = "Stop"
@@ -61,68 +64,69 @@ function Check-NoExceptions([string]$name) {
 }
 function Want([string]$s) { $Only.Count -eq 0 -or $Only -contains $s }
 
+$startedAt = Get-Date
 Copy-Item $cfg $cfgBackup -Force
 try {
-    if (Want "wall") {
-        $ready = Start-Game @()
-        Check "wall: game ready" $ready ""
-        Check "wall: fade on by default" (Has "First person: on .*wall fade True") (Last "First person: on")
-        C @("head pos 1.0 1.6 0"); Start-Sleep 1.5
-        Check "wall: leaning out of the tunnel fades the view" (Wait-For "First person: head inside a wall" 5) (Last "First person: head inside a wall")
-        & "$t\xrsim-shot.ps1" -Dir $d -Out (Join-Path $root "Working\comfort-phase2\wall") -Quiet | Out-Null
-        C @("head pos 0 1.6 0"); Start-Sleep 1.5
-        Check "wall: straightening up brings it back" (Wait-For "First person: head back in the open" 5) (Last "First person: head back in the open")
-        & "$t\xrsim-shot.ps1" -Dir $d -Out (Join-Path $root "Working\comfort-phase2\open") -Quiet | Out-Null
-        Check-NoExceptions "wall"
-    }
-
-    if (Want "blink") {
-        $ready = Start-Game @("--cvr-dbg-preset", "gentle")
-        Check "blink: game ready" $ready ""
-        Check "blink: Gentle preset applied" (Has "First person: on .*comfort Gentle") (Last "First person: on")
-        C @("stick r 1 0"); Start-Sleep -Milliseconds 400; C @("stick r 0 0"); Start-Sleep 1
-        Check "blink: a snap turn blinks" (Wait-For "First person: snap turn with a blink" 5) (Last "snap turn with a blink")
-        Check-NoExceptions "blink"
-    }
-
-    if (Want "scale") {
-        # First run from a config with no remembered eye height: the scale is a guess until it is measured.
+    # ---- session 1: no remembered eye height (scale, wall) ----
+    $session2KeepsConfig = $false
+    if ((Want "scale") -or (Want "wall")) {
         $c = Get-Content $cfgBackup -Raw
         $fresh = [regex]::Replace($c, "(?m)^MeasuredEyeHeight = .*$", "MeasuredEyeHeight = 0")
         Stop-Game
         [System.IO.File]::WriteAllText($cfg, $fresh)
         $ready = Start-Game @() -KeepConfig
-        Check "scale: game ready" $ready ""
-        Check "scale: first run measures the eye height" (Wait-For "First person: character eye height" 20) (Last "character eye height")
-        Start-Sleep 2
+        Check "wall: game ready" $ready ""
+        if (Want "scale") { Check "scale: first run measures the eye height" (Wait-For "First person: character eye height" 20) (Last "character eye height") }
+        if (Want "wall") {
+            Check "wall: fade on by default" (Has "First person: on .*wall fade True") (Last "First person: on")
+            C @("head pos 1.0 1.6 0"); Start-Sleep 1.5
+            Check "wall: leaning out of the tunnel fades the view" (Wait-For "First person: head inside a wall" 5) (Last "First person: head inside a wall")
+            & "$t\xrsim-shot.ps1" -Dir $d -Out (Join-Path $root "Working\comfort-phase2\wall") -Quiet | Out-Null
+            C @("head pos 0 1.6 0"); Start-Sleep 1.5
+            Check "wall: straightening up brings it back" (Wait-For "First person: head back in the open" 5) (Last "First person: head back in the open")
+            & "$t\xrsim-shot.ps1" -Dir $d -Out (Join-Path $root "Working\comfort-phase2\open") -Quiet | Out-Null
+        }
+        if (Want "scale") { Wait-For "First person: character eye height" 20 | Out-Null; Start-Sleep 2 }
+        Check-NoExceptions "session 1"
         Stop-Game
-        $saved = (Select-String -Path $cfg -Pattern "^MeasuredEyeHeight = (.*)$" | Select-Object -Last 1)
-        Check "scale: the eye height is remembered" ($saved -and [double]$saved.Matches[0].Groups[1].Value -gt 0.5) $(if ($saved) { $saved.Line } else { "no line" })
-        $ready = Start-Game @() -KeepConfig
-        Check "scale: next run starts with it" (Has "First person: on .*remembered eye height") (Last "First person: on")
-        $m = Select-String -Path $log -Pattern "character eye height .* -> ([\d.]+) units/m \(was ([\d.]+)\)" | Select-Object -Last 1
-        $same = $m -and [math]::Abs([double]$m.Matches[0].Groups[1].Value - [double]$m.Matches[0].Groups[2].Value) -lt 0.05
-        Check "scale: no resize when it is measured again" $same $(if ($m) { $m.Line } else { "not measured again yet" })
-        Check-NoExceptions "scale"
+        if (Want "scale") {
+            $saved = (Select-String -Path $cfg -Pattern "^MeasuredEyeHeight = (.*)$" | Select-Object -Last 1)
+            Check "scale: the eye height is remembered" ($saved -and [double]$saved.Matches[0].Groups[1].Value -gt 0.5) $(if ($saved) { $saved.Line } else { "no line" })
+            $session2KeepsConfig = $true
+        }
     }
 
-    if (Want "walk") {
-        # Gentle: snap turning, so the flick between the walk and the run turns round (the dev config turns smoothly).
-        $ready = Start-Game @("--cvr-dbg-preset", "gentle")
-        Check "walk: game ready" $ready ""
-        function Speed([string]$stick, [int]$ms) {
-            $n = @(Select-String -Path $log -Pattern "fp path:").Count
-            C @("stick l $stick"); Start-Sleep -Milliseconds $ms; C @("stick l center"); Start-Sleep 2.5
-            $speeds = @(Select-String -Path $log -Pattern "fp path:" | Select-Object -Skip $n | ForEach-Object { [regex]::Match($_.Line, "moving (\d+) frames at ([\d.]+) m/s") } | Where-Object { $_.Success } | ForEach-Object { [pscustomobject]@{ N = [int]$_.Groups[1].Value; V = [double]$_.Groups[2].Value } })
-            $best = $speeds | Sort-Object N -Descending | Select-Object -First 1
-            if ($best) { $best.V } else { 0 }
+    # ---- session 2: Gentle, from the config session 1 left (scale, blink, walk) ----
+    if ((Want "scale") -or (Want "blink") -or (Want "walk")) {
+        $ready = Start-Game @("--cvr-dbg-preset", "gentle") -KeepConfig:$session2KeepsConfig
+        Check "blink: game ready" $ready ""
+        if (Want "scale") {
+            Check "scale: next run starts with it" (Has "First person: on .*remembered eye height") (Last "First person: on")
+            $m = Select-String -Path $log -Pattern "character eye height .* -> ([\d.]+) units/m \(was ([\d.]+)\)" | Select-Object -Last 1
+            $same = $m -and [math]::Abs([double]$m.Matches[0].Groups[1].Value - [double]$m.Matches[0].Groups[2].Value) -lt 0.05
+            Check "scale: no resize when it is measured again" $same $(if ($m) { $m.Line } else { "not measured again yet" })
         }
-        $walk = Speed "0 0.5" 3000
-        C @("stick r 1 0"); Start-Sleep -Milliseconds 300; C @("stick r 0 0"); Start-Sleep 1
-        $run = Speed "0 1" 1000
-        Check "walk: a half push walks (about 1.4 m/s)" ($walk -gt 0.9 -and $walk -lt 1.9) ("{0:F2} m/s" -f $walk)
-        Check "walk: a full push runs (faster than 3 m/s; Gentle runs at about 4)" ($run -gt 3) ("{0:F2} m/s" -f $run)
-        Check-NoExceptions "walk"
+        if ((Want "blink") -or (Want "walk")) {
+            Check "blink: Gentle preset applied" (Has "First person: on .*comfort Gentle") (Last "First person: on")
+            C @("stick r 1 0"); Start-Sleep -Milliseconds 400; C @("stick r 0 0"); Start-Sleep 1
+            Check "blink: a snap turn blinks" (Wait-For "First person: snap turn with a blink" 5) (Last "snap turn with a blink")
+        }
+        if (Want "walk") {
+            # Snap turning (Gentle), so the flick between the walk and the run turns round (the dev config turns smoothly).
+            function Speed([string]$stick, [int]$ms) {
+                $n = @(Select-String -Path $log -Pattern "fp path:").Count
+                C @("stick l $stick"); Start-Sleep -Milliseconds $ms; C @("stick l center"); Start-Sleep 2.5
+                $speeds = @(Select-String -Path $log -Pattern "fp path:" | Select-Object -Skip $n | ForEach-Object { [regex]::Match($_.Line, "moving (\d+) frames at ([\d.]+) m/s") } | Where-Object { $_.Success } | ForEach-Object { [pscustomobject]@{ N = [int]$_.Groups[1].Value; V = [double]$_.Groups[2].Value } })
+                $best = $speeds | Sort-Object N -Descending | Select-Object -First 1
+                if ($best) { $best.V } else { 0 }
+            }
+            $walk = Speed "0 0.5" 3000
+            C @("stick r 1 0"); Start-Sleep -Milliseconds 300; C @("stick r 0 0"); Start-Sleep 1
+            $run = Speed "0 1" 1000
+            Check "walk: a half push walks (about 1.4 m/s)" ($walk -gt 0.9 -and $walk -lt 1.9) ("{0:F2} m/s" -f $walk)
+            Check "walk: a full push runs (faster than 3 m/s; Gentle runs at about 4)" ($run -gt 3) ("{0:F2} m/s" -f $run)
+        }
+        Check-NoExceptions "session 2"
     }
 }
 finally {
@@ -131,5 +135,5 @@ finally {
 }
 $results | Format-Table -AutoSize -Wrap | Out-String -Width 220 | Write-Host
 $fails = @($results | Where-Object { $_.Result -eq "FAIL" }).Count
-Write-Host "$fails failure(s). Log: $log"
+Write-Host "$fails failure(s) in $([int]((Get-Date) - $startedAt).TotalSeconds) s. Log: $log"
 exit $fails

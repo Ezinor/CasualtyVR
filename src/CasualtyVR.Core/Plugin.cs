@@ -16,7 +16,7 @@ namespace CasualtyVR
     public class Plugin : BaseUnityPlugin
     {
         public const string Guid = "casualtyvr.core";
-        public const string Version = "1.3.0-test8";
+        public const string Version = "1.3.0-test12";
         /// <summary>BepInEx needs a plain version number (test builds carry a suffix in Version).</summary>
         public const string NumericVersion = "1.3.0";
         /// <summary>The game version this release was tested with (Application.version).</summary>
@@ -126,6 +126,9 @@ namespace CasualtyVR
         internal static ConfigEntry<bool> FpSnapBlink;
         internal static ConfigEntry<bool> FpWallFade;
         internal static ConfigEntry<float> FpEyeUnits;
+        internal static ConfigEntry<bool> FpHandPoses;
+        internal static ConfigEntry<bool> FpGrabGlow;
+        internal static ConfigEntry<bool> FpDistancePull;
 
         private void Awake()
         {
@@ -230,6 +233,10 @@ namespace CasualtyVR
             FpSteadyHeight = Config.Bind("FirstPerson", "SteadyHeight", false, "Keep your eye height steady while standing and running: no idle sway or running bob from the character's animation; steps up and down glide. Jumps and falls still move you.");
             FpSnapBlink = Config.Bind("FirstPerson", "SnapBlink", false, "A short blink (fade) hides the snap turn.");
             FpWallFade = Config.Bind("FirstPerson", "FadeInsideWalls", true, "The view fades to black while your head is inside a block or outside the tunnel's sides (leaning into a wall).");
+            // Hands (docs/FIRSTPERSON_REVIEW.md FP-9b/9c/9g; decisions D4, D5).
+            FpHandPoses = Config.Bind("FirstPerson", "HandPoses", true, "Your empty hands open, close and point with the controller (the game's own hand art in your character's skin colour). Holding something or wearing something on the hand keeps the character's own hand.");
+            FpGrabGlow = Config.Bind("FirstPerson", "GrabGlow", true, "A softly glowing hand marks the item your hand would take (an open hand), or has locked for a pull (a fist). The game's own highlights stay off unless Highlight says otherwise.");
+            FpDistancePull = Config.Bind("FirstPerson", "DistancePull", true, "Point at a loose item further off: it glows; grip to lock it, then flick your hand towards you to pull it into your hand. Only items the game would let you pick up (in sight, within its reach of 10 blocks).");
             FpEyeUnits = Config.Bind("FirstPerson", "MeasuredEyeHeight", 0f, "Internal: the character's standing eye height in blocks, as last measured, so the automatic world scale is right from the first frame (0 = not measured yet).");
             FlipY = Config.Bind("Debug", "FlipY", true, "Flip eye images vertically (Unity D3D render textures are stored bottom-up).");
 

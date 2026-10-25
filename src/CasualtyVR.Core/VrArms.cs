@@ -51,6 +51,8 @@ namespace CasualtyVR
         {
             public readonly Segment[] Segs = new Segment[3];
             public float Upper, Fore, Hand;
+            public Block Pose;   // the hand pose art (Phase 4b), drawn instead of the hand when it is empty and bare
+            public HandPose Shown;
         }
 
         private readonly GameObject root;
@@ -106,6 +108,24 @@ namespace CasualtyVR
 
             // The wrist sits behind the controller's aim point, the hand points along the aim.
             Vector3 wristTarget = aimPos - aimFwd * (arm.Hand * 0.5f);
+            // An empty hand drawn as a voxel hand (Phase 4b) wraps around the controller like a real one: the fingers point
+            // where the controller points (the aim pose), the thumb side runs up the handle (the grip's forward) and the
+            // handle passes through the curled fingers on the palm side. Pointing the fingers along the handle, as held
+            // items do, stood them straight up with the controller held level (headset, 1.3.0-test10).
+            HandPose pose = Plugin.FpHandPoses.Value ? VrGrab.PoseFor(hand) : HandPose.Own;
+            var handSeg = arm.Segs[2];
+            bool voxel = pose != HandPose.Own && handSeg.Parts.Count == 1 && handSeg.Own != null;
+            Quaternion handRot = Quaternion.identity;
+            float voxelSize = HandVoxel * Mathf.Abs(handSeg.Limb.transform.lossyScale.y);
+            if (voxel)
+            {
+                Vector3 f = VrInput.HandPose(hand, out _, out Vector3 pointDir, out _, out _) && pointDir.sqrMagnitude > 1e-6f ? pointDir.normalized : aimFwd;
+                Vector3 top = Vector3.ProjectOnPlane(aimFwd, f);
+                if (top.sqrMagnitude < 1e-6f) top = Vector3.ProjectOnPlane(Vector3.up, f);
+                handRot = Quaternion.LookRotation(f, top.normalized);
+                Vector3 back = handRot * Vector3.right * (side < 0f ? -1f : 1f);   // the back of the hand
+                wristTarget = aimPos - f * (HandleAt.z * voxelSize) - back * (HandleAt.x * voxelSize);
+            }
             float a = arm.Upper, b = arm.Fore;
             Vector3 toT = wristTarget - shoulder;
             float d = Mathf.Clamp(toT.magnitude, Mathf.Abs(a - b) + 1e-3f, a + b - 1e-3f);
@@ -123,7 +143,74 @@ namespace CasualtyVR
             Place(arm.Segs[0], shoulder, elbow, head);
             Place(arm.Segs[1], elbow, wrist, head);
             Place(arm.Segs[2], wrist, handEnd, head);
+            PlacePose(arm, hand, side, wrist, pose, voxel, handRot, voxelSize);
         }
+
+        private static bool ownDumped;
+
+        /// <summary>--cvr-dbg-dumphands: also save the character's own arm sprites and log their tint and size (pose art).</summary>
+        private static void DumpOwn(Arm arm)
+        {
+            ownDumped = true;
+            string dir = System.IO.Path.Combine(BepInEx.Paths.BepInExRootPath, "CasualtyVR", "hands");
+            System.IO.Directory.CreateDirectory(dir);
+            for (int i = 0; i < arm.Segs.Length; i++)
+            {
+                var own = arm.Segs[i]?.Own;
+                if (own == null || own.sprite == null) continue;
+                var sp = own.sprite;
+                var tex = HandPoses.Readable(sp.texture, sp.textureRect);
+                System.IO.File.WriteAllBytes(System.IO.Path.Combine(dir, $"own{i}-{sp.name}.png"), tex.EncodeToPNG());
+                Object.Destroy(tex);
+                var mat = own.sharedMaterial;
+                string matCol = mat != null && mat.HasProperty("_Color") ? mat.GetColor("_Color").ToString() : "-";
+                Plugin.Log.LogInfo($"Arms dump: seg {i} '{sp.name}' rect {sp.rect} ppu {sp.pixelsPerUnit} pivot {sp.pivot} colour {own.color} material '{mat?.name}' shader '{mat?.shader?.name}' _Color {matCol} lossyScale {own.transform.lossyScale} parts {arm.Segs[i].Parts.Count}");
+            }
+            Plugin.Log.LogInfo($"Arms dump: lengths upper {arm.Upper:F3} fore {arm.Fore:F3} hand {arm.Hand:F3}");
+        }
+
+        /// <summary>
+        /// Hand poses (Phase 4b, FP 9b): an empty, bare hand is drawn as a small voxel hand around the controller
+        /// (HandPoses.MeshFor; its frame comes from Pose), with the hand's own material, posed by the controller
+        /// (VrGrab.PoseFor). Holding something, or wearing something on the hand (any sprite under the hand limb), keeps the
+        /// character's own hand, so the item and clothing still fit it.
+        /// </summary>
+        private void PlacePose(Arm arm, int hand, float side, Vector3 wrist, HandPose pose, bool voxel, Quaternion rot, float v)
+        {
+            var seg = arm.Segs[2];
+            if (!ownDumped && System.Array.IndexOf(System.Environment.GetCommandLineArgs(), "--cvr-dbg-dumphands") >= 0) DumpOwn(arm);
+            Mesh mesh = voxel ? HandPoses.MeshFor(pose) : null;
+            if (pose != arm.Shown)
+            {
+                if (Plugin.Verbose) Plugin.Log.LogInfo($"Arms: {(hand == 1 ? "right" : "left")} hand pose {pose}{(mesh == null && pose != HandPose.Own ? " (own art: not bare)" : "")}");
+                arm.Shown = pose;
+            }
+            if (mesh == null) { if (arm.Pose != null) arm.Pose.enabled = false; return; }
+            if (arm.Pose == null) arm.Pose = Take();
+            var b = arm.Pose;
+            b.enabled = true;
+            foreach (var (_, cp) in seg.Parts) cp.enabled = false;
+            if (b.Filter.sharedMesh != mesh) b.Filter.sharedMesh = mesh;
+            b.Built = null;
+            // Voxels a little smaller than the arm's pixels (1/8 unit), so the hand is a hand's size: about 11 cm across
+            // the knuckles at the game's scale. It starts half a voxel inside the forearm, so no gap opens at the wrist; the
+            // left hand is mirrored (its palm faces the other way).
+            b.transform.SetPositionAndRotation(wrist - rot * Vector3.forward * (0.5f * v), rot);
+            b.transform.localScale = new Vector3(side < 0f ? -v : v, v, v);
+            var own = seg.Own;
+            if (b.Renderer.sharedMaterial != own.sharedMaterial) b.Renderer.sharedMaterial = own.sharedMaterial;
+            b.Renderer.sortingLayerID = own.sortingLayerID;
+            b.Renderer.sortingOrder = 30000 + Mathf.Clamp(own.sortingOrder, -2000, 2000);
+            props.Clear();
+            props.SetTexture("_MainTex", HandPoses.Palette);
+            props.SetColor("_RendererColor", Color.white);
+            b.Renderer.SetPropertyBlock(props);
+        }
+
+        private const float HandVoxel = 0.09f;   // units per hand voxel at limb scale 1 (the arm's pixels are 0.125)
+        // Where the controller's handle passes through the voxel hand (HandPoses frame: x back of the hand, z along it):
+        // on the palm side, under the curled fingers.
+        private static readonly Vector3 HandleAt = new Vector3(-1.2f, 0f, 3f);
 
         // Map the segment's limb space so A lands on p, the bone A->B points along p->q, and the sprite faces the eye.
         private static void Place(Segment seg, Vector3 p, Vector3 q, Vector3 eye)
@@ -284,7 +371,11 @@ namespace CasualtyVR
         public void Clear()
         {
             foreach (var arm in new[] { front, back })
-                if (arm != null) foreach (var s in arm.Segs) Release(s);
+                if (arm != null)
+                {
+                    foreach (var s in arm.Segs) Release(s);
+                    if (arm.Pose != null) { Return(arm.Pose); arm.Pose = null; }
+                }
             front = back = null;
             built = null;
         }
