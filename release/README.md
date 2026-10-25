@@ -106,6 +106,7 @@ looking along the tunnels. Menus, loading screens and the death screen still use
 | Left stick forward/back, part way | Walk the way you face (1.4 m/s) |
 | Left stick forward/back, all the way | Run (6.5 m/s by default) |
 | Right stick up/down | Climb / crouch |
+| Lower your head (about 30 cm) | Crouch (stand up to stop) |
 | Right stick flick sideways | Turn around (or smooth turning, in the settings) |
 | A | Jump |
 
@@ -154,11 +155,13 @@ finger) is exactly where it acts.
   - *Highlight under your hand*: *Off* (the default), *Blocks* (the game's striped marker on the block you aim at,
     for mining and building), or *All* (also the game's outline on items and objects).
   - View distance; tunnel width and world scale under *More settings*.
+  - *Sound from your head*: you hear from where your head is and the way it faces (on by default).
 - *Hands & body* tab:
   - *Character looks where you look*, and *Aim with* hand or head.
-  - Grab mode (hold the grip, or toggle), swing to attack, distance pull, the hand on what you can grab, vibration
-    (on/off and strength).
-  - Under *More settings*: hand poses, touch minigames, your arms and your body (each on/off and a thickness), and how far behind your eyes the
+  - Grab mode (hold the grip, or toggle), swing to attack, distance pull, the hand on what you can grab.
+  - *Crouch for real* and how far down your head must go; vibration (on/off and strength); *Heartbeat when in
+    danger* (off by default).
+  - Under *More settings*: vibration when hurt and when a hit lands, hand poses, touch minigames, your arms and your body (each on/off and a thickness), and how far behind your eyes the
     body sits.
 
 The both-grips ragdoll control is off in first person, because the grips are your hands; bind ragdoll to another

@@ -168,6 +168,13 @@ if (WantAny @("poses", "affordance", "grab-throw", "pull", "mouth", "chest-store
         C @("grip r 0"); Start-Sleep -Milliseconds 600
         Check "chest-store: store" (Has "Grab: stored .* in slot") (LastLine "Grab: (stored|let go)")
         Start-Sleep 1
+        # 30 cm ahead of the eyes is in front of the chest, not at it (headset, test13: it opened too far out).
+        Mark
+        C @("hand r offset 0.3 0 -0.38"); Start-Sleep -Milliseconds 400
+        C @("grip r 1"); Start-Sleep -Milliseconds 600
+        C @("grip r 0"); Start-Sleep -Milliseconds 600
+        Check "chest-store: a hand 30 cm out does not open the inventory" (-not (Has "chest -> inventory radial")) $(if (Has "chest -> inventory radial") { LastLine "chest -> inventory radial" } else { "no radial" })
+        C @("hand r offset 0.1 0 -0.38"); Start-Sleep -Milliseconds 400
         C @("grip r 1"); Start-Sleep -Milliseconds 800
         C @("grip r 0"); Start-Sleep 3
         Check "chest-store: radial" ((Has "chest -> inventory radial") -and (Has "UI mode: dashboard")) "radial on the dashboard"
@@ -183,6 +190,12 @@ if (WantAny @("swing", "swing-gate")) {
     Mark
     Swings
     Check "swing-gate: a machete swings" (Has "Grab: swing attack") (LastLine "Grab: swing attack")
+    Check "swing-gate: a miss does not count as a hit (Phase 5)" (-not (Has "Haptics: hit landed")) "no 'hit landed' for swings at the air"
+    # Phase 5 (FP 10b): chops down at the floor land (the machete reaches about 5 blocks from the torso).
+    Mark
+    foreach ($i in 1..3) { C @("hand r offset 0.35 0.1 0.1"); Start-Sleep -Milliseconds 700; C @("hand r offset 0.5 0.1 -0.7"); Start-Sleep -Milliseconds 700 }
+    Start-Sleep 1
+    Check "swing-gate: a hit that lands vibrates (Phase 5)" (Has "Haptics: hit landed") $(if (Has "Haptics: hit landed") { LastLine "Haptics: hit landed" } else { "swings: " + (Since "Grab: swing attack").Count })
     # Store the machete at the chest, then swing bare-handed.
     C @("hand r offset 0.1 0 -0.38"); Start-Sleep -Milliseconds 400
     C @("grip r 1"); Start-Sleep -Milliseconds 400

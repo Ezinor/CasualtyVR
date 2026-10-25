@@ -49,6 +49,7 @@ namespace CasualtyVR
         private LiquidVolume liquids;
         private VrRain rain;
         private WorldText worldText;
+        private Ears ears;
         private float dbgTalkAt = 16f;
         private float nextSpeedLog;
         private static readonly float DbgFpOffAt = float.TryParse(ArgValue("--cvr-dbg-fpoff"), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float fpOff) ? fpOff : -1f;
@@ -92,6 +93,9 @@ namespace CasualtyVR
         private static readonly string DbgModifiers = ArgAfter("--cvr-dbg-modifier");
         private bool modifiersDone;
         private static readonly string DbgSpawn = ArgAfter("--cvr-dbg-spawn");
+        private static readonly bool DbgRope = Array.IndexOf(Args, "--cvr-dbg-rope") >= 0;
+        private static readonly float DbgHurtAt = float.TryParse(ArgAfter("--cvr-dbg-hurt"), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out float hurtAt) ? hurtAt : 0f;
+        private bool roped, dbgHurt;
         private bool spawned;
         private static string ArgAfter(string f) { int i = Array.IndexOf(Args, f); return i >= 0 && i + 1 < Args.Length ? Args[i + 1] : null; }
         internal static readonly bool DbgNoFog = Array.IndexOf(Args, "--cvr-dbg-nofog") >= 0;
@@ -227,6 +231,10 @@ namespace CasualtyVR
                 try { firstPerson.Destroy(); } catch (Exception de) { Plugin.Log.LogError("First person cleanup failed: " + de); }
                 firstPerson = null;
             }
+            if (feature == "sound at head" && ears != null)
+            {
+                try { ears.Release("the feature failed"); } catch (Exception de) { Plugin.Log.LogError("Ears cleanup failed: " + de); }
+            }
         }
 
         private void LateUpdate()
@@ -262,6 +270,9 @@ namespace CasualtyVR
                         try { firstPerson.AfterHead(ui.DashboardShown); } catch (Exception e) { Fail("first person", e); }
                         FirstPerson.UpdateTime.Stop();
                     }
+                    // Phase 5: the ears at the head in first person; vibration from the game's own events.
+                    if (On("sound at head")) try { ears?.Update(fp); } catch (Exception e) { Fail("sound at head", e); }
+                    if (On("game haptics")) try { GameHaptics.Update(); } catch (Exception e) { Fail("game haptics", e); }
                     if (On("frame")) try { frame.Update(LogicCamera(), focus); } catch (Exception e) { Fail("frame", e); }
                     if (On("greenscreen")) try { greenscreen.Update(eyes, copiedFrom); postOverride.SetGreenscreen(Plugin.GreenscreenOn); } catch (Exception e) { Fail("greenscreen", e); }
                     if (On("particles")) try { particles.Update(fp); } catch (Exception e) { Fail("particles", e); }
@@ -369,6 +380,34 @@ namespace CasualtyVR
                 dbgRecentered = true;
                 manualRecenter = true;
                 Plugin.Log.LogInfo("Recenter test: requested");
+            }
+            // --cvr-dbg-rope (tools/fp-comfort.ps1, FP 12b): a climbing rope half a block ahead of the player, hung the way the
+            // game's climbing rope item hangs one: from up to 8 blocks above (under any ceiling) down to the ground.
+            if (!roped && DbgRope && Time.timeSinceLevelLoad > 14f && PlayerCamera.main != null && PlayerCamera.main.body != null
+                && WorldGeneration.world != null && !WorldGeneration.world.generatingWorld)
+            {
+                roped = true;
+                var rb = PlayerCamera.main.body;
+                Vector2 at = (Vector2)rb.transform.position + new Vector2(rb.isRight ? 0.5f : -0.5f, 0f);
+                int ground = LayerMask.GetMask("Ground");
+                var up = Physics2D.Linecast(at, at + Vector2.up * 8f, ground);
+                Vector2 top = up ? up.point - Vector2.up * 0.2f : at + Vector2.up * 8f;
+                var down = Physics2D.Linecast(top, top + Vector2.down * 25f, ground);
+                Vector2 bottom = down ? down.point : top + Vector2.down * 25f;
+                var rope = Utils.Create("climbingropeextended", top, 0f);
+                var climbable = rope.GetComponent<Climbable>();
+                climbable.points.Add(bottom);
+                climbable.points.Add(top);
+                rope.transform.GetChild(0).localScale = new Vector2(1f, Vector2.Distance(top, bottom) / 25f);
+                Plugin.Log.LogInfo($"Rope test: hung from {top} to {bottom} ({Vector2.Distance(top, bottom):F1} blocks)");
+            }
+            // --cvr-dbg-hurt <s> (FP 10b): the back arm dislocates at that level time (the game's own pain and screen shake).
+            if (DbgHurtAt > 0f && !dbgHurt && Time.timeSinceLevelLoad > DbgHurtAt && PlayerCamera.main != null && PlayerCamera.main.body != null)
+            {
+                dbgHurt = true;
+                var limb = PlayerCamera.main.body.limbs[6];
+                limb.Dislocate();
+                Plugin.Log.LogInfo($"Hurt test: dislocated '{limb.name}'");
             }
             if (!cloned && Array.IndexOf(Args, "--cvr-dbg-clone") >= 0 && Time.timeSinceLevelLoad > 16f && PlayerCamera.main != null && PlayerCamera.main.body != null
                 && WorldGeneration.world != null && !WorldGeneration.world.generatingWorld)
@@ -609,6 +648,7 @@ namespace CasualtyVR
             greenscreen = new Greenscreen();
             rain = new VrRain();
             worldText = new WorldText();
+            ears = new Ears();
             if (Array.IndexOf(Args, "--cvr-dbg-nofp") < 0) firstPerson = new FirstPerson();
             XrNative.cvr_xr_set_eye_textures(targets[0].GetNativeTexturePtr(), targets[1].GetNativeTexturePtr());
             submitEvent = XrNative.cvr_xr_get_submit_event();
@@ -669,6 +709,8 @@ namespace CasualtyVR
             rain = null;
             worldText?.Destroy();
             worldText = null;
+            ears?.Destroy();
+            ears = null;
             liquids = null;
             postOverride?.Destroy();
             particles?.Restore();

@@ -1,5 +1,27 @@
 # Changelog
 
+## 1.3.0-test14 — 2026-10-25 (test build)
+
+After your headset pass of test13:
+
+- **The inventory opens only with your hand at your chest.** A grip about 20 cm in front of your chest opened it;
+  now the hand must be against your chest (within about 16 cm ahead of your eyes, between your collarbone and
+  stomach). Storing a held item at your chest uses the same zone.
+
+## 1.3.0-test13 — 2026-10-25 (test build)
+
+**Senses and movement in first person:**
+
+- **You hear from your head:** a sound ahead of you is ahead wherever you face, and turning your head turns the
+  sound. Loudness stays as in the flat game. (VR settings, *First person*: *Sound from your head*.)
+- **Crouch for real:** lower your head about 30 cm and your character crouches, and the view follows your own head
+  (it does not drop a second time). Under a low ceiling the view stays below it. The right stick still crouches too.
+  (*Hands & body*: *Crouch for real*, with how far down.)
+- **Vibration from the game:** both controllers buzz when you are hurt, harder for a harder hit; the right one when
+  your attack actually hits something. Optional: a heartbeat in the left controller when your character is in
+  danger, at its own heart rate (*Hands & body*: *Heartbeat when in danger*, off by default; the other two under
+  *More settings*).
+
 ## 1.3.0-test12 — 2026-10-24 (test build)
 
 - **The laser clicks menus even when the game window is not in front** (for example with Virtual Desktop, or another

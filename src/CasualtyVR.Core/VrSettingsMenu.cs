@@ -987,6 +987,7 @@ namespace CasualtyVR
                     list.Add(Switch("Objects face you", Plugin.FpFaceObjects));
                     list.Add(Choice("Highlight under your hand", Plugin.FpHighlight, ("Off", "Off"), ("Blocks", "Blocks"), ("All", "All")));
                     list.Add(Slider("View distance", Plugin.FpViewDistance, 20f, 200f, 10f, v => $"{v:F0} blocks"));
+                    list.Add(Switch("Sound from your head", Plugin.FpSoundAtHead));
                     list.Add(Slider("Tunnel width", Plugin.FpCorridor, 1f, 12f, 0.5f, v => $"{v:F1} blocks", more: true));
                     list.Add(new Row
                     {
@@ -1010,7 +1011,11 @@ namespace CasualtyVR
                     list.Add(Switch("Swing to attack", Plugin.FpSwingAttack));
                     list.Add(Switch("Distance pull", Plugin.FpDistancePull));
                     list.Add(Switch("Hand on what you can grab", Plugin.FpGrabGlow));
+                    list.Add(OptSlider("Crouch for real", Plugin.FpRealCrouch, Plugin.FpCrouchDepth, 0.15f, 0.6f, 0.05f, v => $"{v * 100f:F0} cm down"));
                     list.Add(OptSlider("Vibration", Plugin.Haptics, Plugin.HapticStrength, 0.1f, 1f, 0.1f, v => $"{v * 100f:F0}%"));
+                    list.Add(Switch("Heartbeat when in danger", Plugin.HapticHeartbeat));
+                    list.Add(Switch("Vibrate when hurt", Plugin.HapticDamage, more: true));
+                    list.Add(Switch("Vibrate when a hit lands", Plugin.HapticHits, more: true));
                     list.Add(Switch("Hand poses", Plugin.FpHandPoses, more: true));
                     list.Add(Switch("Touch minigames", Plugin.FpMinigameTouch, more: true));
                     list.Add(OptSlider("Controller hands (diorama)", Plugin.ShowHands, Plugin.HandSize, 0.03f, 0.3f, 0.01f, v => $"{v * 100f:F0} cm", more: true));

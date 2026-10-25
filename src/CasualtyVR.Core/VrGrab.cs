@@ -28,7 +28,7 @@ namespace CasualtyVR
     internal static class VrGrab
     {
         private const float GrabRadius = 0.9f;       // blocks around the hand
-        private const float ChestRadiusM = 0.22f;    // metres
+        private const float ChestOutM = 0.16f;       // metres ahead of the eyes, at most, for the chest (AtChest)
         public const float ThrowSpeedM = 1.4f;       // m/s of hand speed to throw instead of drop
         private const float FullThrowSpeedM = 4.5f;  // m/s for full force
 
@@ -162,15 +162,24 @@ namespace CasualtyVR
             return -1;
         }
 
-        private static Vector3 Chest()
+        /// <summary>The hand relative to your eyes in metres, along your facing: x to the right, y up, z forward.</summary>
+        private static Vector3 FromEyes(Vector3 handPos)
         {
             Vector3 fwd = VrSpace.HeadForward;
             fwd.y = 0f;
             fwd = fwd.sqrMagnitude > 1e-4f ? fwd.normalized : Vector3.right;
-            return VrSpace.HeadPosition + (-0.38f * Vector3.up + 0.1f * fwd) * VrSpace.Scale;
+            Vector3 d = (handPos - VrSpace.HeadPosition) / Mathf.Max(VrSpace.Scale, 1e-3f);
+            return new Vector3(Vector3.Dot(d, Vector3.Cross(Vector3.up, fwd)), d.y, Vector3.Dot(d, fwd));
         }
 
-        private static bool AtChest(Vector3 handPos) => (handPos - Chest()).magnitude < ChestRadiusM * VrSpace.Scale;
+        // The chest: a box against it rather than a ball in front of it. The ball (22 cm round a point 10 cm ahead of the
+        // eyes) took a fist 20 cm out from the chest (headset, 1.3.0-test13: "activates too far away from my chest").
+        // The grip point is inside the fist, a few centimetres off the chest when the hand touches it.
+        private static bool AtChest(Vector3 handPos)
+        {
+            var p = FromEyes(handPos);
+            return p.z <= ChestOutM && p.z >= -0.1f && p.y <= -0.22f && p.y >= -0.58f && Mathf.Abs(p.x) <= 0.2f;
+        }
 
         // ---- the grab affordance and the distance pull (Phase 4b) ------------------------------------------------
 
@@ -406,7 +415,7 @@ namespace CasualtyVR
             if (AtChest(handPos))
             {
                 if (pc != null) pc.radialOpen = true;
-                if (Plugin.Verbose) Plugin.Log.LogInfo("Grab: chest -> inventory radial");
+                if (Plugin.Verbose) { var p = FromEyes(handPos); Plugin.Log.LogInfo($"Grab: chest -> inventory radial (hand {p.z:F2} m ahead of the eyes, {-p.y:F2} m below, {p.x:F2} m to the side)"); }
                 return true;
             }
             Vector2 at = handPos;
@@ -541,7 +550,8 @@ namespace CasualtyVR
             VrInput.Press("attack");
             MotionTakes.Note("swing");
             if (Plugin.Verbose) Plugin.Log.LogInfo($"Grab: swing attack at {vel.magnitude:F1} m/s towards {d2}");
-            VrHaptics.Pulse(1, 0.6f, 0.06f);
+            // A light tick for the swing itself; a hit that lands gets its own, stronger pulse (GameHaptics, FP 10b).
+            VrHaptics.Pulse(1, 0.25f, 0.03f);
         }
 
         // Hand over hand: while a hand grips the rope, its room-space movement moves the character along it the

@@ -16,7 +16,7 @@ namespace CasualtyVR
     public class Plugin : BaseUnityPlugin
     {
         public const string Guid = "casualtyvr.core";
-        public const string Version = "1.3.0-test12";
+        public const string Version = "1.3.0-test14";
         /// <summary>BepInEx needs a plain version number (test builds carry a suffix in Version).</summary>
         public const string NumericVersion = "1.3.0";
         /// <summary>The game version this release was tested with (Application.version).</summary>
@@ -129,6 +129,12 @@ namespace CasualtyVR
         internal static ConfigEntry<bool> FpHandPoses;
         internal static ConfigEntry<bool> FpGrabGlow;
         internal static ConfigEntry<bool> FpDistancePull;
+        internal static ConfigEntry<bool> FpSoundAtHead;
+        internal static ConfigEntry<bool> FpRealCrouch;
+        internal static ConfigEntry<float> FpCrouchDepth;
+        internal static ConfigEntry<bool> HapticDamage;
+        internal static ConfigEntry<bool> HapticHits;
+        internal static ConfigEntry<bool> HapticHeartbeat;
 
         private void Awake()
         {
@@ -236,7 +242,14 @@ namespace CasualtyVR
             // Hands (docs/FIRSTPERSON_REVIEW.md FP-9b/9c/9g; decisions D4, D5).
             FpHandPoses = Config.Bind("FirstPerson", "HandPoses", true, "Your empty hands open, close and point with the controller (the game's own hand art in your character's skin colour). Holding something or wearing something on the hand keeps the character's own hand.");
             FpGrabGlow = Config.Bind("FirstPerson", "GrabGlow", true, "A softly glowing hand marks the item your hand would take (an open hand), or has locked for a pull (a fist). The game's own highlights stay off unless Highlight says otherwise.");
-            FpDistancePull = Config.Bind("FirstPerson", "DistancePull", true, "Point at a loose item further off: it glows; grip to lock it, then flick your hand towards you to pull it into your hand. Only items the game would let you pick up (in sight, within its reach of 10 blocks).");
+            FpDistancePull = Config.Bind("FirstPerson", "DistancePull", true, "Point at a loose item further off: a glowing hand marks it; grip to lock it, then flick your hand towards you to pull it into your hand. Only items the game would let you pick up (in sight, within its reach of 10 blocks).");
+            // Senses and movement (docs/BUILD_PLAN.md Phase 5; FIRSTPERSON_REVIEW FP 10a, 10b, 12a; decision D6).
+            FpSoundAtHead = Config.Bind("FirstPerson", "SoundAtHead", true, "In first person you hear from your head: a sound ahead of you is ahead wherever you face, and turning your head turns the sound. Loudness stays the game's.");
+            FpRealCrouch = Config.Bind("FirstPerson", "RealCrouch", true, "Crouch for real: lowering your head by CrouchDepthMetres (from where it was at the last recenter) crouches the character. The view follows your own head.");
+            FpCrouchDepth = Config.Bind("FirstPerson", "CrouchDepthMetres", 0.3f, "How far your head must drop below its recentered height to crouch (0.15-0.6 m).");
+            HapticDamage = Config.Bind("Controllers", "HapticDamage", true, "Both controllers vibrate when you are hurt, stronger for a harder hit (the game's own screen shake and damage).");
+            HapticHits = Config.Bind("Controllers", "HapticHits", true, "The right controller vibrates when your attack hits something (not for a swing that misses).");
+            HapticHeartbeat = Config.Bind("Controllers", "HapticHeartbeat", false, "When your character is in danger (low blood pressure, oxygen or consciousness, a racing heart), the left controller beats with its heart.");
             FpEyeUnits = Config.Bind("FirstPerson", "MeasuredEyeHeight", 0f, "Internal: the character's standing eye height in blocks, as last measured, so the automatic world scale is right from the first frame (0 = not measured yet).");
             FlipY = Config.Bind("Debug", "FlipY", true, "Flip eye images vertically (Unity D3D render textures are stored bottom-up).");
 

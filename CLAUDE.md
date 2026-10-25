@@ -35,6 +35,9 @@ Machine-specific notes, if any, are in `CLAUDE.local.md` (not in git).
   - Phase 4b, hand poses (`HandPoses.cs`, `VrArms.PlacePose`), grab affordance and glow, distance pull (`VrGrab`):
     docs/PHASE4B_RECEIPT.md. fp-smoke `affordance`, `pull`, `poses` (captures); `--cvr-dbg-pull-aim` logs the hand angles
     that point at an item; `--cvr-dbg-dumphands` also saves the character's arm sprites and logs their tint and size.
+  - Phase 5, senses and movement: sound at the head (`Ears.cs`), vibration from game events (`GameHaptics.cs`), real
+    crouch (`VrInput.RealCrouch`, `FirstPerson`), rope transitions: docs/PHASE5_RECEIPT.md. fp-comfort `crouch`,
+    `sound`, `rope`, `haptics`; flags `--cvr-dbg-sound`, `--cvr-dbg-rope`, `--cvr-dbg-hurt <s>`, `--cvr-dbg-danger`.
 - Review plan: docs/IMPROVEMENT_PLAN.md (groups A–E). Group A (input/session lifecycle, recenter heading, fault isolation,
   bridge log `BepInEx/CasualtyVR-bridge.log`): docs/LIFECYCLE_RECEIPT.md, test `tools/vr-lifecycle.ps1` (xr-sim session states,
   focus, validity; flags `--cvr-dbg-recenter <s>`, `--cvr-dbg-throw <s>`). Read the Unity player log in tests, not LogOutput.log (buffered).

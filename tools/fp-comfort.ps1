@@ -1,4 +1,5 @@
-# First-person comfort checks (docs/BUILD_PLAN.md Phase 2, docs/FIRSTPERSON_REVIEW.md FP-8). Dev copy only; restores the
+# First-person comfort, senses and movement checks (docs/BUILD_PLAN.md Phases 2 and 5, docs/FIRSTPERSON_REVIEW.md FP-8,
+# FP-10, FP-12). Dev copy only; restores the
 # dev config afterwards (presets and the remembered eye height change it).
 #
 #   tools/fp-comfort.ps1             all scenarios; exit code = number of failures
@@ -10,8 +11,16 @@
 #     scale    the run measures and remembers the character's eye height
 #     wall     leaning 1 m sideways (xr-sim "head pos") puts the head past the tunnel's side: the view fades to black (an
 #              xr-sim capture shows it), and comes back when you straighten up
-#   session 2, the Gentle preset (snap turning, snap blink), the config session 1 left:
+#   session 2, the Gentle preset (snap turning, snap blink), the config session 1 left, with --cvr-dbg-sound,
+#   --cvr-dbg-rope, --cvr-dbg-danger and --cvr-dbg-hurt:
 #     scale    the run starts with the remembered eye height (no resize after spawn)
+#     crouch   (Phase 5, FP 12a) the head 0.45 m down crouches the character, and the view is your head's height: the
+#              standing eye height less 0.45 m, not lowered again by the character's crouch; standing up stands it up
+#     sound    (FP 10a) the game's listener is off; a test sound ahead is behind you when you turn your head round, at
+#              the flat game's loudness
+#     rope     (FP 12b) the right stick up climbs on a rope next to you, down climbs off; the view's largest one-frame
+#              move on and off is logged
+#     haptics  (FP 10b) a dislocation (the game's own shake and pain) vibrates; the heartbeat beats at the heart rate
 #     blink    a right-stick flick turns with a blink
 #     walk     a half push of the left stick walks at about the walking speed, a full push runs (speeds from the
 #              "fp path" lines)
@@ -97,14 +106,48 @@ try {
     }
 
     # ---- session 2: Gentle, from the config session 1 left (scale, blink, walk) ----
-    if ((Want "scale") -or (Want "blink") -or (Want "walk")) {
-        $ready = Start-Game @("--cvr-dbg-preset", "gentle") -KeepConfig:$session2KeepsConfig
+    if ((Want "scale") -or (Want "blink") -or (Want "walk") -or (Want "crouch") -or (Want "sound") -or (Want "rope") -or (Want "haptics")) {
+        $ready = Start-Game @("--cvr-dbg-preset", "gentle", "--cvr-dbg-sound", "--cvr-dbg-rope", "--cvr-dbg-danger", "--cvr-dbg-hurt", "80") -KeepConfig:$session2KeepsConfig
         Check "blink: game ready" $ready ""
         if (Want "scale") {
             Check "scale: next run starts with it" (Has "First person: on .*remembered eye height") (Last "First person: on")
             $m = Select-String -Path $log -Pattern "character eye height .* -> ([\d.]+) units/m \(was ([\d.]+)\)" | Select-Object -Last 1
             $same = $m -and [math]::Abs([double]$m.Matches[0].Groups[1].Value - [double]$m.Matches[0].Groups[2].Value) -lt 0.05
             Check "scale: no resize when it is measured again" $same $(if ($m) { $m.Line } else { "not measured again yet" })
+        }
+        if (Want "crouch") {
+            # Real crouch: xr-sim stands the head at 1.6 m; 0.45 m lower is past the 0.3 m threshold.
+            C @("head pos 0 1.15 0")
+            Check "crouch: the head down crouches" (Wait-For "Crouch: real on" 5) (Last "Crouch: real")
+            Start-Sleep 2
+            $m = [regex]::Match((Last "First person: real crouch"), "view ([\d.]+) m above the feet \(standing eye ([\d.]+) m, your head ([\d.]+) m down, character crouch ([\d.]+)")
+            $ok = $m.Success -and [math]::Abs([double]$m.Groups[1].Value - ([double]$m.Groups[2].Value - [double]$m.Groups[3].Value)) -lt 0.08 -and [double]$m.Groups[4].Value -gt 0.5
+            Check "crouch: the view is your head's height (no double drop)" $ok $(if ($m.Success) { $m.Value } else { "no real crouch line" })
+            & "$t\xrsim-shot.ps1" -Dir $d -Out (Join-Path $root "Working\senses-phase5\crouch") -Quiet | Out-Null
+            C @("head pos 0 1.6 0")
+            Check "crouch: standing up stands" (Wait-For "Crouch: real off" 5) (Last "Crouch: real")
+            Start-Sleep 1
+        }
+        if (Want "sound") {
+            Check "sound: the game's listener is off in first person" (Has "Ears: the game's listener on") (Last "Ears: the game's listener")
+            function Ears-Line { $n = @(Select-String -Path $log -Pattern "Ears test:").Count; $deadline = (Get-Date).AddSeconds(5); while ((Get-Date) -lt $deadline -and @(Select-String -Path $log -Pattern "Ears test:").Count -le $n) { Start-Sleep -Milliseconds 300 }; Last "Ears test:" }
+            C @("head rot 0 0 0"); Start-Sleep 1; $a = Ears-Line
+            C @("head rot 180 0 0"); Start-Sleep 1; $b = Ears-Line
+            C @("head rot 0 0 0")
+            $pa = [regex]::Match($a, "ears-local \(([-\d.]+), ([-\d.]+), ([-\d.]+)\).* gain ([\d.]+) \(flat game ([\d.]+)\)")
+            $pb = [regex]::Match($b, "ears-local \(([-\d.]+), ([-\d.]+), ([-\d.]+)\).* gain ([\d.]+) \(flat game ([\d.]+)\)")
+            $turned = $pa.Success -and $pb.Success -and [double]$pa.Groups[3].Value -gt 0.5 -and [double]$pb.Groups[3].Value -lt -0.5
+            Check "sound: ahead, then behind when you turn your head" $turned "ahead z $($pa.Groups[3].Value) -> after turning z $($pb.Groups[3].Value)"
+            $same = $pa.Success -and [math]::Abs([double]$pa.Groups[4].Value - [double]$pa.Groups[5].Value) -le 0.1 * [double]$pa.Groups[5].Value + 0.002
+            Check "sound: the flat game's loudness" $same "gain $($pa.Groups[4].Value), flat game $($pa.Groups[5].Value)"
+        }
+        if (Want "rope") {
+            Check "rope: a rope hangs beside you" (Has "Rope test: hung from") (Last "Rope test:")
+            C @("stick r 0 1"); Start-Sleep 1.5; C @("stick r 0 0")
+            Check "rope: the stick climbs on" (Wait-For "First person: climbing on" 4) (Last "First person: climbing on")
+            C @("stick r 0 -1"); $off = Wait-For "First person: climbing off" 8; C @("stick r 0 0")
+            if (-not $off) { C @("btn a press"); $off = Wait-For "First person: climbing off" 4 }
+            Check "rope: down climbs off" $off (Last "First person: climbing off")
         }
         if ((Want "blink") -or (Want "walk")) {
             Check "blink: Gentle preset applied" (Has "First person: on .*comfort Gentle") (Last "First person: on")
@@ -125,6 +168,11 @@ try {
             $run = Speed "0 1" 1000
             Check "walk: a half push walks (about 1.4 m/s)" ($walk -gt 0.9 -and $walk -lt 1.9) ("{0:F2} m/s" -f $walk)
             Check "walk: a full push runs (faster than 3 m/s; Gentle runs at about 4)" ($run -gt 3) ("{0:F2} m/s" -f $run)
+        }
+        if (Want "haptics") {
+            Check "haptics: the heartbeat beats at the heart rate" (Wait-For "Haptics: heartbeat at" 5) (Last "Haptics: heartbeat")
+            $hurt = Wait-For "Hurt test: dislocated" 60
+            Check "haptics: being hurt vibrates" ($hurt -and (Wait-For "Haptics: damage" 3)) (Last "Haptics: damage")
         }
         Check-NoExceptions "session 2"
     }

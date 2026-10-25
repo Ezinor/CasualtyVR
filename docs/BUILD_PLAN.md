@@ -136,6 +136,11 @@ convenient.
 
 ### Phase 5 — Senses and movement verbs (M)
 
+**Built 2026-10-25, test build `1.3.0-test13`:** see [PHASE5_RECEIPT.md](PHASE5_RECEIPT.md). The game hears from 3
+blocks off the plane; the ears' falloff keeps that loudness. Ropes needed no smoothing (at most 5 cm per frame on and
+off). **Headset gate passed 2026-10-25** (sound, crouch, vibration, ladders). After it, `1.3.0-test14`: the chest
+zone for the inventory is a box against the chest instead of a 22 cm ball in front of it.
+
 | Work | From |
 |---|---|
 | Sound at the head | FP 10a = IP 10 |

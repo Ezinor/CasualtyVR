@@ -114,6 +114,19 @@ namespace CasualtyVR
         private bool hasEye;
         private float measuredEyeUnits = -1f;
         private float eyeAboveNeck = -1f, standingFor;
+        private float realCrouchFor;
+        private bool realCrouchLogged;
+        // Getting on and off ropes and ladders (FP 12b): the largest one-frame eye move in the 0.6 s after a change.
+        private bool wasClimbing;
+        private float climbChangeAt = -1f, climbMaxStep, climbTravel;
+
+        // The bottom of the first solid block above, sampled every quarter block from y0 to y1 (float.MaxValue: none).
+        private static float Ceiling(WorldGeneration world, float x, float y0, float y1)
+        {
+            for (float yy = y0; yy <= y1; yy += 0.25f)
+                if (world.GetBlock(new Vector2(x, yy)) != 0) return yy;
+            return float.MaxValue;
+        }
         private Body lastBody;
         private int lastRefresh = -1000;
         private readonly List<Renderer> extraHidden = new List<Renderer>();   // line-of-sight mask
@@ -293,6 +306,26 @@ namespace CasualtyVR
                 float feetEye = body.col.bounds.min.y + EyeUnits;
                 if (world.GetBlock(new Vector2(x, feetEye + 0.15f)) == 0) y = feetEye;   // not into a low ceiling
             }
+            // Real crouch (FP 12a): your own head is down and VrInput holds the game's crouch for it. The anchor stays at the
+            // standing eye height above the feet, so the view follows only your real head: the character crouching as well
+            // would lower it twice. Under a low ceiling (a crouch tunnel) the anchor comes down so the view stays below it
+            // however far you stand up (playbook HAND-004: a physical crouch must not let you see through the level).
+            bool realCrouch = VrInput.RealCrouching && body.standing && body.currentClimbable == null && body.col != null && EyeUnits > 0f;
+            if (realCrouch)
+            {
+                float feet = body.col.bounds.min.y;
+                float headOffset = (VrSpace.HeadTrackingPos.y - seatedOrigin.y) * Scale;   // below the recentered height: negative
+                y = feet + EyeUnits;
+                float ceiling = Ceiling(world, x, feet + 0.5f, feet + EyeUnits + 0.6f);
+                if (ceiling < float.MaxValue) y = Mathf.Min(y, ceiling - 0.3f - headOffset);
+                realCrouchFor += Time.deltaTime;
+                if (realCrouchFor >= 1f && !realCrouchLogged && Plugin.Verbose)
+                {
+                    realCrouchLogged = true;
+                    Plugin.Log.LogInfo($"First person: real crouch: view {(y + headOffset - feet) / Scale:F2} m above the feet (standing eye {EyeUnits / Scale:F2} m, your head {-headOffset / Scale:F2} m down, character crouch {body.crouchAmount:F2}{(ceiling < float.MaxValue ? $", ceiling {(ceiling - feet) / Scale:F2} m" : "")})");
+                }
+            }
+            else { realCrouchFor = 0f; realCrouchLogged = false; }
             var target = new Vector3(x, y, EyeZ);
             // Smoothing 0 = locked to the head limb; 1 = heavy damping. With steady height the vertical follow is gentler,
             // so a step up or down glides (about 0.1 s) and a landing dip is absorbed.
@@ -312,14 +345,41 @@ namespace CasualtyVR
                     float ahead = eye.x + body.rb.velocity.x * Time.deltaTime;
                     next.x = Mathf.Lerp(ahead, target.x, 1f - Mathf.Exp(-Mathf.Min(rate, 8f) * dt));
                 }
-                if (steady) next.y = Mathf.Lerp(eye.y, target.y, 1f - Mathf.Exp(-Mathf.Min(rate, 12f) * dt));
+                if (steady || realCrouch) next.y = Mathf.Lerp(eye.y, target.y, 1f - Mathf.Exp(-Mathf.Min(rate, 12f) * dt));
                 eye = next;
             }
-            if (DbgPathDump) DbgState = $"{(steady ? "S" : "n")}{(body.grounded ? "g" : "a")}{(body.crouching || body.crouchAmount >= 0.05f ? "c" : "")}{(body.col != null ? ((body.col.bounds.min.y) % 10f).ToString("F2") : "-")}";
+            ClimbTransitions(body);
+            if (DbgPathDump) DbgState =$"{(steady ? "S" : "n")}{(body.grounded ? "g" : "a")}{(body.crouching || body.crouchAmount >= 0.05f ? "c" : "")}{(body.col != null ? ((body.col.bounds.min.y) % 10f).ToString("F2") : "-")}";
             if (Plugin.Verbose) RecordPath(target, eye, Scale, body);
             VrSpace.SetFirstPerson(eye, seatedOrigin, yaw, Scale);
             UpdateComfort(body);
             return true;
+        }
+
+        private Vector3 climbLastEye;
+
+        // FP 12b: getting on or off a rope or ladder switches the eye between the head limb (climbing) and the standing
+        // height, and the game may lift the body over the edge at the top. The log says how far the view moved in one
+        // frame over the next 0.6 s (metres), the measure for whether a transition needs smoothing.
+        private void ClimbTransitions(Body body)
+        {
+            bool climbing = body.currentClimbable != null;
+            float now = Time.unscaledTime;
+            if (climbing != wasClimbing)
+            {
+                wasClimbing = climbing;
+                climbChangeAt = now;
+                climbMaxStep = climbTravel = 0f;
+                climbLastEye = eye;
+            }
+            if (climbChangeAt < 0f) return;
+            float step = (eye - climbLastEye).magnitude / Mathf.Max(Scale, 1e-3f);
+            climbLastEye = eye;
+            climbMaxStep = Mathf.Max(climbMaxStep, step);
+            climbTravel += step;
+            if (now - climbChangeAt < 0.6f) return;
+            climbChangeAt = -1f;
+            if (Plugin.Verbose) Plugin.Log.LogInfo($"First person: climbing {(climbing ? "on" : "off")}: the view moved at most {climbMaxStep:F3} m in one frame ({climbTravel:F2} m in 0.6 s)");
         }
 
         // ---- eye path statistics (verbose; BUILD_PLAN Phase 0, IP 9 / FP 8d) -----------------------------------

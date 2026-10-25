@@ -235,7 +235,7 @@ namespace CasualtyVR
             bool settings = VrSettingsMenu.IsOpen;
             MenuStickY = !settings ? 0f : Mathf.Abs(right.stickY) >= Mathf.Abs(left.stickY) ? right.stickY : left.stickY;
             if (fp && !settings) FirstPersonSticks(left, right);
-            else { FirstPerson.TurnAxis = 0f; FirstPerson.Walking = false; }
+            else { FirstPerson.TurnAxis = 0f; FirstPerson.Walking = false; RealCrouching = false; }
             foreach (var kv in Plugin.ControlBinds)
             {
                 if (!controlsOn.Contains(kv.Key) || suppressed.Contains(kv.Key)) continue;
@@ -307,6 +307,30 @@ namespace CasualtyVR
             Key("FP.back", facingRight ? "left" : "right");
             Key("FP.climb", "up");
             Key("FP.crouch", "down");
+            RealCrouch();
+        }
+
+        /// <summary>Your head is down: the game's crouch is held (FP 12a), and FirstPerson keeps the view on your real head.</summary>
+        public static bool RealCrouching { get; private set; }
+
+        // Real crouch (FP 12a, D6: on by default): your head this far below where it was at the last recenter holds the
+        // game's crouch key, as the stick does. Hysteresis of 8 cm, so it does not flicker at the edge. Not on a rope or
+        // ladder (there "down" climbs down), in water (it dives) or while ragdolled.
+        private static void RealCrouch()
+        {
+            var body = PlayerCamera.main != null ? PlayerCamera.main.body : null;
+            float drop = lastSeated.y - VrSpace.HeadTrackingPos.y;
+            float depth = Plugin.FpCrouchDepth.Value;
+            bool allowed = Plugin.FpRealCrouch.Value && body != null && body.standing && body.currentClimbable == null && !body.inWater;
+            bool now = allowed && (RealCrouching ? drop > depth - 0.08f : drop >= depth);
+            if (now != RealCrouching)
+            {
+                RealCrouching = now;
+                if (Plugin.Verbose) Plugin.Log.LogInfo($"Crouch: real {(now ? "on" : "off")} (head {drop:F2} m below the recentered height, threshold {depth:F2} m)");
+            }
+            if (!RealCrouching) return;
+            var k = KeyBinds.GetBind("down");
+            if (k != KeyCode.None) held.Add(k);
         }
 
         private static void Sample(string control, float value, float on, float off)
